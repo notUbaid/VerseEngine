@@ -1,8 +1,12 @@
 /**
- * Clock.ts
- * 144Hz Drift-Corrected Playback Clock for Spotify Desktop.
- * Resolves Spotify's coarse ~250ms progress polls into butter-smooth
- * sub-millisecond continuous time for 120fps+ kinetic typography.
+ * Clock.ts — VERSE//ENGINE High-Precision Interpolated Playback Clock
+ *
+ * Resolves Spotify's asynchronous progress polls into a continuous,
+ * monotonic 144Hz playback clock:
+ *   1. Hard-snap threshold (>= 60ms) for seeks, skips, and track changes
+ *   2. Exponential drift smoothing for minor timing micro-variations
+ *   3. Safe fallback when Spotify APIs are uninitialized
+ *   4. Persistent latency offset tuning (+/- 50ms)
  */
 
 export class Clock {
@@ -14,10 +18,10 @@ export class Clock {
   private syncOffsetMs: number = 0;
   private currentInterpolatedMs: number = 0;
   private currentTrackUri: string = '';
+  private boundEvents: boolean = false;
 
   private constructor() {
     this.loadSyncOffset();
-    this.syncFromSpotify(true);
     this.bindSpotifyEvents();
   }
 
@@ -54,9 +58,7 @@ export class Clock {
     this.syncOffsetMs = offsetMs;
     try {
       localStorage.setItem('verse_engine_sync_offset', offsetMs.toString());
-    } catch {
-      // Storage unavailable
-    }
+    } catch {}
   }
 
   public adjustSyncOffset(deltaMs: number): number {
@@ -65,33 +67,33 @@ export class Clock {
     return updated;
   }
 
-  private bindSpotifyEvents(): void {
-    if (typeof Spicetify === 'undefined' || !Spicetify.Player) return;
+  public bindSpotifyEvents(): void {
+    if (this.boundEvents || typeof Spicetify === 'undefined' || !Spicetify.Player) return;
 
-    Spicetify.Player.addEventListener('songchange', () => {
-      const data = Spicetify.Player.data;
-      if (data?.item?.uri) {
-        this.setTrackUri(data.item.uri);
-      }
-      this.syncFromSpotify(true);
-    });
+    try {
+      Spicetify.Player.addEventListener('songchange', () => {
+        const data = Spicetify.Player.data;
+        if (data?.item?.uri) {
+          this.setTrackUri(data.item.uri);
+        }
+        this.syncFromSpotify(true);
+      });
 
-    Spicetify.Player.addEventListener('onplaypause', () => {
-      this.syncFromSpotify(true);
-    });
+      Spicetify.Player.addEventListener('onplaypause', () => {
+        this.syncFromSpotify(true);
+      });
 
-    Spicetify.Player.addEventListener('onprogress', () => {
-      this.syncFromSpotify(false);
-    });
+      Spicetify.Player.addEventListener('onprogress', () => {
+        this.syncFromSpotify(false);
+      });
+
+      this.boundEvents = true;
+    } catch {}
   }
 
   private getSafeProgress(): number {
     try {
-      if (
-        typeof Spicetify !== 'undefined' &&
-        Spicetify.Player &&
-        (Spicetify.Player as any).origin?._state
-      ) {
+      if (typeof Spicetify !== 'undefined' && Spicetify.Player) {
         return Spicetify.Player.getProgress() || 0;
       }
     } catch {}
@@ -100,11 +102,7 @@ export class Clock {
 
   private getSafeIsPlaying(): boolean {
     try {
-      if (
-        typeof Spicetify !== 'undefined' &&
-        Spicetify.Player &&
-        (Spicetify.Player as any).origin?._state
-      ) {
+      if (typeof Spicetify !== 'undefined' && Spicetify.Player) {
         return Spicetify.Player.isPlaying() || false;
       }
     } catch {}
@@ -118,7 +116,29 @@ export class Clock {
 
     this.isPlaying = playing;
 
-    if (hardSnap || polledProgress !== this.lastSpotifyMs) {
+    if (hardSnap) {
+      this.lastSpotifyMs = polledProgress;
+      this.lastPerfNow = now;
+      this.currentInterpolatedMs = polledProgress;
+      return;
+    }
+
+    if (this.isPlaying) {
+      const elapsedSinceSample = now - this.lastPerfNow;
+      const estimatedMs = this.lastSpotifyMs + elapsedSinceSample;
+      const delta = polledProgress - estimatedMs;
+
+      // Hard-snap on seek (> 60ms jump)
+      if (Math.abs(delta) >= 60) {
+        this.lastSpotifyMs = polledProgress;
+        this.lastPerfNow = now;
+        this.currentInterpolatedMs = polledProgress;
+      } else if (Math.abs(delta) > 3) {
+        // Exponential drift correction (absorbs 20% of drift smoothly)
+        this.lastSpotifyMs += delta * 0.20;
+        this.lastPerfNow = now;
+      }
+    } else {
       this.lastSpotifyMs = polledProgress;
       this.lastPerfNow = now;
       this.currentInterpolatedMs = polledProgress;
@@ -126,31 +146,21 @@ export class Clock {
   }
 
   /**
-   * Called every frame in the AnimationEngine loop
-   * 144Hz continuous interpolation between Spotify's polled progress updates.
+   * Called every frame in the AnimationEngine 144Hz loop
    */
   public tick(): number {
-    const polledProgress = this.getSafeProgress();
-    const playing = this.getSafeIsPlaying();
     const now = performance.now();
-
+    const playing = this.getSafeIsPlaying();
     this.isPlaying = playing;
 
     if (this.isPlaying) {
-      // Detect if Spotify sent a new progress milestone or user seeked
-      const progressDelta = Math.abs(polledProgress - this.lastSpotifyMs);
-      if (polledProgress > 0 && (polledProgress !== this.lastSpotifyMs || progressDelta > 2000)) {
-        this.lastSpotifyMs = polledProgress;
-        this.lastPerfNow = now;
-        this.currentInterpolatedMs = polledProgress;
-      } else {
-        // High-precision RAF interpolation between Spotify ticks
-        this.currentInterpolatedMs = this.lastSpotifyMs + (now - this.lastPerfNow);
-      }
+      const elapsed = now - this.lastPerfNow;
+      this.currentInterpolatedMs = this.lastSpotifyMs + elapsed;
     } else {
-      if (polledProgress > 0) {
-        this.lastSpotifyMs = polledProgress;
-        this.currentInterpolatedMs = polledProgress;
+      const polled = this.getSafeProgress();
+      if (polled > 0) {
+        this.lastSpotifyMs = polled;
+        this.currentInterpolatedMs = polled;
       }
       this.lastPerfNow = now;
     }

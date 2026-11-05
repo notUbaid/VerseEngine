@@ -1,6 +1,6 @@
 /**
  * test/unit-tests.ts
- * Deterministic unit tests for VERSE//ENGINE core mathematics and parsers.
+ * Deterministic unit tests for VERSE//ENGINE core mathematics, parsers, and typography.
  */
 
 import { HarmonicSpring, SpringVector2 } from '../src/engine/SpringSolver';
@@ -49,9 +49,15 @@ console.log('--- 1. Testing HarmonicSpring Solver ---');
   assert(vec.x.position > 35 && vec.y.position < -20, '2D Vector spring tracks coordinates correctly');
 }
 
-console.log('\n--- 2. Testing SemanticPhysics Lexicon ---');
+console.log('\n--- 2. Testing SemanticPhysics Lexicon & Unicode Sanitization ---');
 {
-  assert(sanitizeWord('Shattered!') === 'shattered', 'sanitizeWord strips punctuation and lowercases');
+  // Unicode sanitization: Must preserve Devanagari, accents, CJK, etc.
+  assert(sanitizeWord('Shattered!') === 'shattered', 'sanitizeWord strips punctuation and lowercases ASCII');
+  assert(sanitizeWord('café') === 'café', 'sanitizeWord preserves accented Latin characters (café)');
+  assert(sanitizeWord('प्यार!') === 'प्यार', 'sanitizeWord preserves Devanagari characters (प्यार)');
+  assert(sanitizeWord('你好，世界！') === '你好世界', 'sanitizeWord preserves CJK characters (你好世界)');
+
+  // Semantic lexicon mappings
   assert(matchSemanticEffect('shattered') === 'FRACTURE', 'shattered maps to FRACTURE');
   assert(matchSemanticEffect('falling') === 'GRAVITY', 'falling maps to GRAVITY');
   assert(matchSemanticEffect('drown') === 'GRAVITY', 'drown maps to GRAVITY');
@@ -61,52 +67,84 @@ console.log('\n--- 2. Testing SemanticPhysics Lexicon ---');
   assert(matchSemanticEffect('screaming') === 'ECHO', 'screaming maps to ECHO');
   assert(matchSemanticEffect('heartbeat') === 'PULSE', 'heartbeat maps to PULSE');
   assert(matchSemanticEffect('sunlight') === 'PULSE', 'sunlight maps to PULSE');
+
+  // Removed overly common words to avoid diluting semantic physics
+  assert(matchSemanticEffect('love') === 'NONE', '"love" is neutral to avoid visual clutter');
+  assert(matchSemanticEffect('light') === 'NONE', '"light" is neutral to avoid visual clutter');
+  assert(matchSemanticEffect('down') === 'NONE', '"down" is neutral to avoid visual clutter');
   assert(matchSemanticEffect('telephone') === 'NONE', 'neutral word maps to NONE');
 }
 
-console.log('\n--- 3. Testing LyricProvider Synthesizer ---');
+console.log('\n--- 3. Testing LyricProvider Standard LRC Parser ---');
 {
   const provider = LyricProvider.getInstance();
-  // Access private methods for testing through any cast
   const pAny = provider as any;
 
-  // Standard LRC parsing
+  // Multiple timestamps per line & fraction-less timestamps
   const rawLrc = `
-[00:12.50]First line of lyrics
-[00:15.80]Second line of lyrics (yeah)
-[00:20.00]Third line ending with period.
+[00:10.50][00:25.00]Repeated line with multiple timestamps
+[01:15]Line without fraction
+[01:20.80]Normal line (yeah)
 `;
   const parsed = pAny.parseStandardLrc(rawLrc);
-  assert(parsed.length === 3, `parseStandardLrc parsed 3 lines (got ${parsed.length})`);
-  assert(parsed[0].timeMs === 12500, `First line starts at 12500ms (got ${parsed[0].timeMs})`);
-  assert(parsed[1].timeMs === 15800, `Second line starts at 15800ms (got ${parsed[1].timeMs})`);
+  assert(parsed.length === 4, `Parsed 4 lines total (multiple timestamps expanded)`);
+  assert(parsed[0].timeMs === 10500, `First timestamp at 10500ms`);
+  assert(parsed[1].timeMs === 25000, `Repeated line timestamp sorted at 25000ms`);
+  assert(parsed[2].timeMs === 75000, `Fraction-less timestamp [01:15] parsed as 75000ms`);
+  assert(parsed[3].timeMs === 80800, `Fraction timestamp [01:20.80] parsed as 80800ms`);
 
-  // Synthesis into lines -> words -> chars
+  // Synthesis into lines & words
   const synthesized = pAny.synthesizeLines(parsed);
-  assert(synthesized.length === 3, `synthesizeLines created 3 lines (got ${synthesized.length})`);
-  
-  // Line 1 words
-  const line1 = synthesized[0];
-  assert(line1.words.length === 4, `Line 1 has 4 words (got ${line1.words.length})`);
-  assert(line1.words[0].cleanText === 'first', 'Word 1 text is "first"');
-  assert(line1.words[0].chars.length === 5, 'Word "first" has 5 chars');
-  assert(line1.words[0].chars[0].char === 'F', 'Char 1 is "F"');
+  assert(synthesized.length === 4, `synthesizeLines produced 4 lines`);
 
-  // Ad-lib separation on Line 2
-  const line2 = synthesized[1];
-  assert(line2.adLibs.length === 1, `Line 2 separated "(yeah)" into ad-lib (got ${line2.adLibs.length})`);
-  assert(line2.adLibs[0].cleanText === 'yeah', 'Ad-lib clean text is "yeah"');
+  // Line 3 ad-lib verification: flagged inline, never duplicated
+  const line3 = synthesized[3];
+  const adLibWord = line3.words.find((w: any) => w.text === '(yeah)');
+  assert(adLibWord !== undefined, 'Ad-lib "(yeah)" is present in words');
+  assert(adLibWord?.isAdLib === true, 'Ad-lib "(yeah)" is flagged as isAdLib === true');
+  assert(line3.adLibs.length === 0, 'Ad-lib is NOT duplicated into line.adLibs (prevents double-rendering)');
 
-  // Vowel weighting verification
-  const word = line1.words[0];
-  const charDurations = word.chars.map((c: any) => c.durationMs);
-  // 'i' (vowel) should receive more duration than consonants 'f', 'r', 's', 't'
-  const vowelDur = word.chars[1].durationMs; // 'i'
-  const consDur = word.chars[0].durationMs;  // 'f'
-  assert(vowelDur > consDur, `Vowels receive more weight than consonants (${vowelDur}ms > ${consDur}ms)`);
+  // International script segmentation: Devanagari and CJK
+  const intlLrc = `
+[00:05.00]मेरा प्यार सच्चा है
+[00:10.00]夜空に輝く星
+`;
+  const intlParsed = pAny.parseStandardLrc(intlLrc);
+  const intlSynthesized = pAny.synthesizeLines(intlParsed);
+  assert(intlSynthesized.length === 2, 'International lyrics parsed into 2 lines');
+
+  const hindiLine = intlSynthesized[0];
+  const hindiWords = hindiLine.words.map((w: any) => w.text);
+  assert(hindiWords.includes('प्यार'), 'Devanagari word "प्यार" segmented with intact conjuncts');
+
+  const cjkLine = intlSynthesized[1];
+  assert(cjkLine.words.length >= 2, 'CJK line segmented into multiple tokens (not one giant word)');
 }
 
-console.log('\n--- 4. Testing Garbage Lyric Filtering ---');
+console.log('\n--- 4. Testing Enhanced LRC Parser & Word Durations ---');
+{
+  const provider = LyricProvider.getInstance();
+  const pAny = provider as any;
+
+  // Enhanced LRC with <mm:ss.xx> word timestamps
+  const enhLrc = `[00:04.20]<00:04.20>Hello <00:04.70>darkness <00:05.20>my <00:05.60>old <00:06.00>friend`;
+  const enhLines = pAny.parseEnhancedLrc(enhLrc);
+
+  assert(enhLines.length === 1, 'Enhanced LRC parsed 1 line');
+  const line = enhLines[0];
+  assert(line.words.length === 5, 'Line has 5 words');
+
+  // Word 0 "Hello": 04.20 to 04.70 = 500ms (NOT measuring gap before word!)
+  const wHello = line.words[0];
+  assert(wHello.startMs === 4200, '"Hello" starts at 4200ms');
+  assert(wHello.durationMs === 500, `"Hello" duration is exactly 500ms (got ${wHello.durationMs}ms)`);
+
+  const wDarkness = line.words[1];
+  assert(wDarkness.startMs === 4700, '"darkness" starts at 4700ms');
+  assert(wDarkness.durationMs === 500, `"darkness" duration is 500ms (got ${wDarkness.durationMs}ms)`);
+}
+
+console.log('\n--- 5. Testing Garbage Lyric Filtering ---');
 {
   assert(isGarbageLyricLine('00:00'), '00:00 is detected as garbage timestamp');
   assert(isGarbageLyricLine('00:16'), '00:16 is detected as garbage timestamp');

@@ -4,10 +4,9 @@ import {
   PaletteColors,
   PaletteType,
   LyricLine,
-  LyricWord,
-  LyricChar
+  LyricWord
 } from '../types/lyrics';
-import { CachedLineRef, CachedWordRef, CachedCharRef } from '../engine/AnimationEngine';
+import { CachedLineRef, CachedWordRef } from '../engine/AnimationEngine';
 import { HarmonicSpring } from '../engine/SpringSolver';
 import { Clock } from '../engine/Clock';
 
@@ -37,7 +36,37 @@ export class StageView {
 
   constructor(callbacks: StageCallbacks) {
     this.callbacks = callbacks;
+    this.loadSavedPreferences();
     this.injectGoogleFonts();
+  }
+
+  private loadSavedPreferences(): void {
+    try {
+      const savedStyle = localStorage.getItem('verse_engine_style') as VisualStyle;
+      if (savedStyle && ['convex', 'drift', 'editorial', 'semantic'].includes(savedStyle)) {
+        this.currentStyle = savedStyle;
+      }
+      const savedPalette = localStorage.getItem('verse_engine_palette') as PaletteType;
+      if (savedPalette && ['album', 'editorial', 'obsidian'].includes(savedPalette)) {
+        this.currentPaletteType = savedPalette;
+      }
+      const savedRim = localStorage.getItem('verse_engine_rim');
+      if (savedRim !== null) {
+        this.rimEnabled = savedRim === 'true';
+      }
+    } catch {}
+  }
+
+  public getSavedStyle(): VisualStyle {
+    return this.currentStyle;
+  }
+
+  public getSavedPaletteType(): PaletteType {
+    return this.currentPaletteType;
+  }
+
+  public getSavedRimEnabled(): boolean {
+    return this.rimEnabled;
   }
 
   private injectGoogleFonts(): void {
@@ -47,7 +76,7 @@ export class StageView {
       link.id = id;
       link.rel = 'stylesheet';
       link.href =
-        'https://fonts.googleapis.com/css2?family=Instrument+Serif:ital,wght@0,400;1,400&family=Plus+Jakarta+Sans:wght@700;800&family=Syne:wght@700;800;900&display=swap';
+        'https://fonts.googleapis.com/css2?family=Instrument+Serif:ital,wght@0,400;1,400&family=Plus+Jakarta+Sans:wght@600;700;800&family=Syne:wght@700;800&display=swap';
       document.head.appendChild(link);
     }
   }
@@ -78,13 +107,14 @@ export class StageView {
           background-color: var(--ve-bg, #0A0808);
           font-family: 'Plus Jakarta Sans', 'SpotifyMixUI', 'CircularSp', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
           user-select: none;
-          transition: background-color 0.5s ease, opacity 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-          animation: veStageFadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+          transition: background-color 0.4s ease;
+          animation: veStageFadeIn 0.3s ease-out forwards;
         }
 
+        /* Clean opacity fade: ZERO permanent blur or transform filters on the root stage */
         @keyframes veStageFadeIn {
-          0%   { opacity: 0; transform: scale(1.02); filter: blur(12px); }
-          100% { opacity: 1; transform: scale(1.0);  filter: blur(0px);  }
+          0%   { opacity: 0; }
+          100% { opacity: 1; }
         }
 
         /* Lumn-style 4-edge Ambient Bezel Rim Lighting */
@@ -98,15 +128,14 @@ export class StageView {
             radial-gradient(ellipse  60% 100% at 100% 50%, var(--ve-rim-secondary, rgba(92,20,33,0.35)) 0%, transparent 55%);
           pointer-events: none;
           z-index: 5;
-          will-change: opacity;
-          transition: opacity 0.4s ease;
+          opacity: 0.85;
+          transition: opacity 0.3s ease;
         }
 
-        /* Cinematic Atmospheric Viewport Mask: lyrics dissolve into smoke at top/bottom */
+        /* Cinematic Atmospheric Viewport Mask: lyrics dissolve into mist at top/bottom */
         .ve-perspective-stage {
           position: absolute;
           inset: 0;
-          perspective: 1000px;
           overflow: hidden;
           pointer-events: auto;
           -webkit-mask-image: linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.6) 12%, black 22%, black 78%, rgba(0,0,0,0.6) 88%, transparent 100%);
@@ -119,25 +148,24 @@ export class StageView {
           inset: 0;
           width: 100%;
           height: 100%;
-          transform-style: preserve-3d;
-          will-change: transform;
+          pointer-events: none;
         }
 
-        /* Vertical scrolling kinetic lyrics container */
+        /* Vertical scrolling kinetic lyrics container (only element with will-change) */
         .ve-lyrics-container {
           position: absolute;
           top: 0;
           left: 8vw;
           width: 84vw;
           max-width: 1400px;
-          transform-style: preserve-3d;
-          will-change: transform;
           box-sizing: border-box;
           padding-top: 15vh;
           padding-bottom: 55vh;
+          pointer-events: auto;
+          will-change: transform;
         }
 
-        /* Line structure */
+        /* Line structure: ZERO CSS transitions so JS RAF loop never fights CSS */
         .ve-line {
           position: relative;
           display: flex;
@@ -147,50 +175,48 @@ export class StageView {
           row-gap: 0.35em;
           line-height: 1.36;
           margin: 1.8rem 0;
-          transform-style: preserve-3d;
-          will-change: transform, opacity, filter;
-          transition: opacity 0.35s ease, filter 0.35s ease, transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
           cursor: pointer;
         }
 
         .ve-line:hover {
-          opacity: 0.85 !important;
+          opacity: 0.90 !important;
         }
 
-        /* Words: Explicit horizontal separation ensures words NEVER collide */
+        /* Words: Single-element soft liquid karaoke sweep with full kerning & ligatures */
         .ve-word {
           position: relative;
           display: inline-flex;
           align-items: baseline;
           white-space: nowrap;
-          transform-style: preserve-3d;
-          will-change: transform, opacity;
           margin-right: 0.32em !important;
           font-size: clamp(2.3rem, 3.8vw, 4.2rem);
           font-weight: 700;
           letter-spacing: -0.015em;
-          color: var(--ve-text-inactive, rgba(250, 249, 246, 0.28));
-          transition: color 0.2s ease;
+          transform-origin: center baseline;
+          background: linear-gradient(
+            90deg,
+            var(--ve-highlight, #FAF9F6) 0%,
+            var(--ve-highlight, #FAF9F6) var(--word-p, 0%),
+            var(--ve-text-inactive, rgba(250, 249, 246, 0.28)) calc(var(--word-p, 0%) + 14%),
+            var(--ve-text-inactive, rgba(250, 249, 246, 0.28)) 100%
+          );
+          background-clip: text;
+          -webkit-background-clip: text;
+          color: transparent;
         }
 
         /* ── 1. CONVEX / FISHEYE MODE ── */
         .ve-style-convex .ve-line {
           margin: 2.2rem 0 !important;
-          transform-style: preserve-3d;
         }
         .ve-style-convex .ve-word {
           font-size: clamp(2.4rem, 4.0vw, 4.4rem);
           font-weight: 700;
-          letter-spacing: -0.015em;
-          margin-right: 0.32em !important;
-          transform-style: preserve-3d;
-          will-change: transform, filter, opacity;
-          transition: filter 0.2s ease, opacity 0.2s ease;
         }
 
         /* ── 2. DRIFT / SHIP MARQUEE MODE (Continuous un-wrapped kinetic ribbon) ── */
         .ve-style-drift {
-          width: 100vw !important;
+          width: max-content !important;
           max-width: none !important;
           left: 0 !important;
           padding: 0 !important;
@@ -201,16 +227,14 @@ export class StageView {
           width: max-content !important;
           margin: 2.8rem 0 !important;
           padding-left: 36vw !important;
-          transform-origin: left center;
         }
         .ve-style-drift .ve-word {
+          font-family: 'Syne', 'Plus Jakarta Sans', sans-serif !important;
           font-size: clamp(3.0rem, 5.2vw, 5.4rem) !important;
           font-weight: 800 !important;
           text-transform: uppercase !important;
           letter-spacing: -0.01em !important;
           margin-right: 0.35em !important;
-          white-space: nowrap !important;
-          transform-style: preserve-3d;
         }
 
         /* ── 3. EDITORIAL MODE (Swiss Haute-Couture Typographic Press) ── */
@@ -232,19 +256,18 @@ export class StageView {
           background: var(--ve-primary);
           opacity: 0.85;
           box-shadow: 0 0 10px var(--ve-primary);
-          transition: width 0.1s linear;
         }
         .ve-style-editorial .ve-word {
           font-size: clamp(2.4rem, 4.2vw, 4.5rem);
           font-weight: 700;
-          margin-right: 0.34em !important;
         }
-        .ve-style-editorial .ve-word-key {
+        .ve-style-editorial .ve-word-key,
+        .ve-word-adlib {
           font-family: 'Instrument Serif', Georgia, serif !important;
           font-style: italic !important;
-          font-size: 1.28em !important;
-          letter-spacing: 0.02em !important;
+          font-size: 1.25em !important;
           font-weight: 400 !important;
+          letter-spacing: 0.02em !important;
         }
 
         /* ── 4. SEMANTIC LIVING PHYSICS MODE ── */
@@ -252,35 +275,8 @@ export class StageView {
           margin: 2.0rem 0;
         }
         .ve-style-semantic .ve-word {
-          font-size: clamp(2.5rem, 4.2vw, 4.6rem);
-          font-weight: 800;
-          margin-right: 0.34em !important;
-          transform-style: preserve-3d;
-          will-change: transform, filter;
-        }
-
-        /* Ad-lib inline word styling */
-        .ve-word-adlib {
-          font-family: 'Instrument Serif', Georgia, serif;
-          font-style: italic;
-          font-size: 0.88em;
-          opacity: 0.78;
-        }
-
-        /* Characters: liquid gradient sweep + optical bloom */
-        .ve-char {
-          position: relative;
-          display: inline-block;
-          will-change: transform;
-          background: linear-gradient(
-            90deg,
-            var(--ve-highlight, #FAF9F6) var(--char-p, 0%),
-            var(--ve-text-inactive, rgba(250, 249, 246, 0.28)) var(--char-p, 0%)
-          );
-          background-clip: text;
-          -webkit-background-clip: text;
-          color: transparent;
-          filter: drop-shadow(0 0 calc(var(--char-glow, 0) * 12px) var(--ve-primary));
+          font-size: clamp(2.4rem, 4.0vw, 4.4rem);
+          font-weight: 700;
         }
 
         /* FRACTURE twin clip-path layers */
@@ -288,7 +284,6 @@ export class StageView {
           clip-path: polygon(0 0, 100% 0, 100% 48%, 0 55%);
           position: relative;
           display: inline-block;
-          will-change: transform;
         }
         .ve-fracture-bottom {
           clip-path: polygon(0 55%, 100% 48%, 100% 100%, 0 100%);
@@ -296,7 +291,6 @@ export class StageView {
           top: 0;
           left: 0;
           display: inline-block;
-          will-change: transform;
         }
 
         /* ECHO ghost clones */
@@ -310,23 +304,6 @@ export class StageView {
           -webkit-text-stroke: 1.5px var(--ve-primary);
           color: transparent;
           opacity: 0;
-        }
-
-        /* Ad-lib: floats above the line */
-        .ve-adlib {
-          position: absolute;
-          bottom: calc(100% + 4px);
-          right: 0;
-          font-family: 'Instrument Serif', Georgia, serif;
-          font-style: italic;
-          font-size: clamp(1.3rem, 2vw, 2rem);
-          color: var(--ve-secondary);
-          opacity: 0.35;
-          transform: translateZ(-80px);
-          filter: blur(1.5px);
-          pointer-events: none;
-          white-space: nowrap;
-          will-change: transform, opacity;
         }
 
         /* Liquid Glass Auto-Hiding Control Pill */
@@ -448,7 +425,7 @@ export class StageView {
 
   /**
    * Builds the DOM tree ONCE for the song.
-   * Returns cached element pointers for the vanilla 120fps AnimationEngine.
+   * Words are single spans with soft liquid gradient wipes.
    */
   public renderLyrics(track: ProcessedTrack): CachedLineRef[] {
     if (!this.lyricsContainerEl) return [];
@@ -468,55 +445,30 @@ export class StageView {
       });
 
       const cachedWords: CachedWordRef[] = [];
-      const cachedAdLibs: CachedWordRef[] = [];
 
-      // Render primary words
       line.words.forEach((word, wIdx) => {
         const wordEl = document.createElement('span');
         wordEl.className = 've-word';
         wordEl.id = word.id;
 
-        // Editorial style: apply .ve-word-key to genuine semantic keywords
-        const isKeyWord = word.semanticEffect !== 'NONE';
-        if (isKeyWord) {
+        if (word.semanticEffect !== 'NONE') {
           wordEl.classList.add('ve-word-key');
         }
         if (word.isAdLib) {
           wordEl.classList.add('ve-word-adlib');
         }
 
-        const cachedChars: CachedCharRef[] = [];
+        let shearTopEl: HTMLElement | undefined;
+        let shearBottomEl: HTMLElement | undefined;
 
-        // Build character elements
-        word.chars.forEach((char) => {
-          const charEl = document.createElement('span');
-          charEl.className = 've-char';
-          charEl.textContent = char.char;
+        if (word.semanticEffect === 'FRACTURE') {
+          wordEl.innerHTML = `<span class="ve-fracture-top">${word.text}</span><span class="ve-fracture-bottom">${word.text}</span>`;
+          shearTopEl = wordEl.querySelector('.ve-fracture-top') as HTMLElement;
+          shearBottomEl = wordEl.querySelector('.ve-fracture-bottom') as HTMLElement;
+        } else {
+          wordEl.textContent = word.text;
+        }
 
-          let shearTopEl: HTMLElement | undefined;
-          let shearBottomEl: HTMLElement | undefined;
-
-          if (word.semanticEffect === 'FRACTURE') {
-            charEl.innerHTML = `<span class="ve-fracture-top">${char.char}</span><span class="ve-fracture-bottom">${char.char}</span>`;
-            shearTopEl = charEl.querySelector('.ve-fracture-top') as HTMLElement;
-            shearBottomEl = charEl.querySelector('.ve-fracture-bottom') as HTMLElement;
-          }
-
-          cachedChars.push({
-            el: charEl,
-            char,
-            springY: new HarmonicSpring(0, 190, 20),
-            springScale: new HarmonicSpring(1.0, 180, 22),
-            springProgress: new HarmonicSpring(0.0, 210, 24),
-            springGlow: new HarmonicSpring(0.0, 200, 22),
-            shearTopEl,
-            shearBottomEl
-          });
-
-          wordEl.appendChild(charEl);
-        });
-
-        // ECHO semantic: create 2 ghost clone spans per word
         const echoClones: HTMLElement[] = [];
         if (word.semanticEffect === 'ECHO') {
           for (let ci = 1; ci <= 2; ci++) {
@@ -533,37 +485,17 @@ export class StageView {
           word,
           lineIndex: line.index,
           wordIndex: wIdx,
-          chars: cachedChars,
           springZ: new HarmonicSpring(0, 140, 22),
           springBlur: new HarmonicSpring(0, 140, 22),
           springScale: new HarmonicSpring(1.0, 150, 24),
+          springProgress: new HarmonicSpring(0.0, 200, 22),
           springGravityY: new HarmonicSpring(0, 160, 20),
+          shearTopEl,
+          shearBottomEl,
           echoClones
         });
 
         lineEl.appendChild(wordEl);
-      });
-
-      // Render ad-libs
-      line.adLibs.forEach((adLib, aIdx) => {
-        const adLibEl = document.createElement('div');
-        adLibEl.className = 've-adlib';
-        adLibEl.textContent = adLib.text;
-
-        const dummyChars: CachedCharRef[] = [];
-        cachedAdLibs.push({
-          el: adLibEl,
-          word: adLib,
-          lineIndex: line.index,
-          wordIndex: aIdx,
-          chars: dummyChars,
-          springZ: new HarmonicSpring(-80, 120, 22),
-          springBlur: new HarmonicSpring(1.5, 120, 22),
-          springScale: new HarmonicSpring(0.96, 120, 22),
-          springGravityY: new HarmonicSpring(0, 160, 20)
-        });
-
-        lineEl.appendChild(adLibEl);
       });
 
       this.lyricsContainerEl!.appendChild(lineEl);
@@ -571,8 +503,7 @@ export class StageView {
       cachedLines.push({
         el: lineEl,
         line,
-        words: cachedWords,
-        adLibs: cachedAdLibs
+        words: cachedWords
       });
     });
 
@@ -628,19 +559,22 @@ export class StageView {
     `;
 
     this.syncOffsetDisplayEl = document.getElementById('ve-sync-display');
+    this.updateSyncDisplay();
     this.bindPillEvents();
   }
 
   private bindPillEvents(): void {
     if (!this.controlPillEl) return;
 
-    // Styles
     this.controlPillEl.querySelectorAll('[data-style]').forEach((btn) => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         const style = (btn as HTMLElement).getAttribute('data-style') as VisualStyle;
         if (style && style !== this.currentStyle) {
           this.currentStyle = style;
+          try {
+            localStorage.setItem('verse_engine_style', style);
+          } catch {}
           this.applyStyleClass(style);
           this.callbacks.onStyleChange(style);
           this.renderControlPill();
@@ -648,28 +582,31 @@ export class StageView {
       });
     });
 
-    // Palettes
     this.controlPillEl.querySelectorAll('[data-palette]').forEach((btn) => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         const palette = (btn as HTMLElement).getAttribute('data-palette') as PaletteType;
         if (palette) {
           this.currentPaletteType = palette;
+          try {
+            localStorage.setItem('verse_engine_palette', palette);
+          } catch {}
           this.callbacks.onPaletteChange(palette);
           this.renderControlPill();
         }
       });
     });
 
-    // Rim toggle
     document.getElementById('ve-rim-btn')?.addEventListener('click', (e) => {
       e.stopPropagation();
       this.rimEnabled = !this.rimEnabled;
+      try {
+        localStorage.setItem('verse_engine_rim', this.rimEnabled ? 'true' : 'false');
+      } catch {}
       this.callbacks.onRimToggle(this.rimEnabled);
       this.renderControlPill();
     });
 
-    // Sync offsets
     document.getElementById('ve-sync-down')?.addEventListener('click', (e) => {
       e.stopPropagation();
       this.clock.adjustSyncOffset(-50);
@@ -682,7 +619,6 @@ export class StageView {
       this.updateSyncDisplay();
     });
 
-    // Close button
     document.getElementById('ve-close-btn')?.addEventListener('click', (e) => {
       e.stopPropagation();
       this.callbacks.onClose();
@@ -710,7 +646,6 @@ export class StageView {
         window.clearTimeout(this.hideTimeout);
       }
 
-      // Auto-hide after 2000ms idle - cursor vanishes, pill disappears
       this.hideTimeout = window.setTimeout(() => {
         if (!this.rootEl || !this.controlPillEl) return;
         this.rootEl.style.cursor = 'none';

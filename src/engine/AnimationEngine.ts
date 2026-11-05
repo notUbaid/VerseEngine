@@ -1,19 +1,20 @@
 /**
  * AnimationEngine.ts — VERSE//ENGINE High-Performance 144Hz RAF Motion Core
  *
- * IRON LAWS:
- *   1. ZERO React `setState` or `useState` inside this file.
- *   2. All per-frame mutations happen via direct HTMLElement transforms and CSS variables.
- *   3. Continuous active-line vertical tracking via damped harmonic spring solver.
- *   4. Continuous floating-point focal tracking for Verci Fisheye and Ship drift camera.
- *   5. Sub-pixel letter-by-letter liquid gradient sweep with organic physics.
+ * ARCHITECTURAL INVARIANTS:
+ *   1. ZERO React dependencies or setState.
+ *   2. Direct DOM mutations on cached refs with dirty checking to prevent layout thrash.
+ *   3. Damped harmonic spring physics for all dynamic coordinates.
+ *   4. Perspective(900px) on word transforms to prevent Chromium 3D flattening.
+ *   5. Smooth word-level liquid karaoke gradient wipes (0% -> 100%).
+ *   6. Monotonic camera tracking in Drift mode without line snapping.
+ *   7. GPU scaleX() for Editorial melisma to avoid layout reflows.
  */
 
 import {
   ProcessedTrack,
   LyricLine,
   LyricWord,
-  LyricChar,
   VisualStyle,
   PaletteColors
 } from '../types/lyrics';
@@ -23,45 +24,50 @@ import { WebGLPostProcess } from './WebGLPostProcess';
 
 // ─── Cached Ref Interfaces ────────────────────────────────────────────────────
 
-export interface CachedCharRef {
-  el: HTMLElement;
-  char: LyricChar;
-  springY: HarmonicSpring;         // vertical offset spring (-4px -> 0px)
-  springScale: HarmonicSpring;     // scale spring (1.0 -> 1.08 -> 1.0)
-  springProgress: HarmonicSpring;  // fill sweep 0.0 -> 1.0 for gradient --char-p
-  springGlow: HarmonicSpring;      // bloom intensity 0.0 -> 1.0 for --char-glow
-  shearTopEl?: HTMLElement;        // FRACTURE top clip-path layer
-  shearBottomEl?: HTMLElement;     // FRACTURE bottom clip-path layer
-}
-
 export interface CachedWordRef {
   el: HTMLElement;
   word: LyricWord;
   lineIndex: number;
   wordIndex: number;
-  chars: CachedCharRef[];
   springZ: HarmonicSpring;         // depth (translateZ)
   springBlur: HarmonicSpring;      // DOF blur
   springScale: HarmonicSpring;     // word-level scale spring
+  springProgress: HarmonicSpring;  // fill sweep 0.0 -> 1.0 for --word-p
   springGravityY: HarmonicSpring;  // GRAVITY semantic
+  shearTopEl?: HTMLElement;        // FRACTURE top clip-path layer
+  shearBottomEl?: HTMLElement;     // FRACTURE bottom clip-path layer
   echoClones?: HTMLElement[];      // ECHO wireframe clone ghosts
   cachedOffsetLeft?: number;
   cachedWidth?: number;
+
+  // Dirty-checking cache
+  lastFill?: string;
+  lastTransform?: string;
+  lastFilter?: string;
+  lastOpacity?: string;
 }
 
 export interface CachedLineRef {
   el: HTMLElement;
   line: LyricLine;
   words: CachedWordRef[];
-  adLibs: CachedWordRef[];
+  adLibs?: CachedWordRef[];
   cachedOffsetTop?: number;
   cachedOffsetLeft?: number;
+
+  // Dirty-checking cache
+  lastTransform?: string;
+  lastOpacity?: string;
+  lastFilter?: string;
+  lastVisibility?: string;
+  lastActiveProgress?: string;
 }
 
 export class AnimationEngine {
   private clock: Clock;
   private rafId: number | null = null;
   private lastTime: number = performance.now();
+  private lastCurrentMs: number = 0;
 
   // Bound DOM refs (cached, never queried inside tick)
   private stageEl: HTMLElement | null = null;
@@ -78,7 +84,7 @@ export class AnimationEngine {
   // Vertical stage spring for butter-smooth active line centering
   private stageYSpring: HarmonicSpring = new HarmonicSpring(0, 110, 19);
 
-  // Horizontal camera spring for drift wall style
+  // Horizontal camera spring for drift marquee ribbon
   private cameraSpring: SpringVector2 = new SpringVector2(0, 0, 95, 18);
 
   // Ambient Rim Breathing
@@ -115,6 +121,7 @@ export class AnimationEngine {
     this.activeWordRef = null;
     this.currentActiveLineIdx = 0;
     this.isInitialPositionSet = false;
+    this.lastCurrentMs = 0;
 
     this.measureOffsets();
 
@@ -145,6 +152,9 @@ export class AnimationEngine {
     if (this.lyricsContainerEl) {
       this.lyricsContainerEl.className = `ve-lyrics-container ve-style-${style}`;
     }
+    // Invalidate line and word caches on style change
+    this.invalidateRenderCache();
+
     if (typeof window !== 'undefined') {
       requestAnimationFrame(() => {
         this.measureOffsets();
@@ -188,39 +198,48 @@ export class AnimationEngine {
     }
   }
 
+  private invalidateRenderCache(): void {
+    for (let i = 0; i < this.cachedLines.length; i++) {
+      const lineRef = this.cachedLines[i];
+      lineRef.lastTransform = undefined;
+      lineRef.lastOpacity = undefined;
+      lineRef.lastFilter = undefined;
+      lineRef.lastVisibility = undefined;
+      for (let w = 0; w < lineRef.words.length; w++) {
+        const wordRef = lineRef.words[w];
+        wordRef.lastFill = undefined;
+        wordRef.lastTransform = undefined;
+        wordRef.lastFilter = undefined;
+        wordRef.lastOpacity = undefined;
+      }
+    }
+  }
+
   /**
-   * PURE 144Hz RAF TICK: Direct DOM mutations on cached refs.
+   * PURE 144Hz RAF TICK: Direct DOM mutations on cached refs with dirty checking.
    */
   private tick(dt: number): void {
     if (!this.cachedLines || this.cachedLines.length === 0) return;
 
     const currentMs = this.clock.tick();
+
+    // ── Seek Detection: backwards jump reset ─────────────────────────────────
+    if (this.lastCurrentMs > 0 && currentMs < this.lastCurrentMs - 250) {
+      this.handleSeekBackward(currentMs);
+    }
+    this.lastCurrentMs = currentMs;
+
     let anyVocalActive = false;
-    let targetLineIdx = -1;
+    let targetLineIdx = this.findActiveLineIndex(currentMs);
     let currentActiveWord: CachedWordRef | null = null;
 
-    // ── 1. Find the currently active or upcoming line ─────────────────────────
-    for (let lIdx = 0; lIdx < this.cachedLines.length; lIdx++) {
-      const line = this.cachedLines[lIdx].line;
-      if (currentMs >= line.startMs && currentMs <= line.endMs) {
-        targetLineIdx = lIdx;
+    if (targetLineIdx !== -1) {
+      const activeLine = this.cachedLines[targetLineIdx].line;
+      if (currentMs >= activeLine.startMs && currentMs <= activeLine.endMs) {
         anyVocalActive = true;
-        break;
       }
-    }
-
-    // If between lines, find upcoming or recent line
-    if (targetLineIdx === -1) {
-      for (let lIdx = 0; lIdx < this.cachedLines.length; lIdx++) {
-        const line = this.cachedLines[lIdx].line;
-        if (line.startMs > currentMs) {
-          targetLineIdx = Math.max(0, lIdx > 0 && currentMs - this.cachedLines[lIdx - 1].line.endMs < 2500 ? lIdx - 1 : lIdx);
-          break;
-        }
-      }
-      if (targetLineIdx === -1) {
-        targetLineIdx = this.cachedLines.length - 1;
-      }
+    } else {
+      targetLineIdx = 0;
     }
 
     this.currentActiveLineIdx = targetLineIdx;
@@ -247,18 +266,24 @@ export class AnimationEngine {
       this.lyricsContainerEl.style.transform = `translate3d(0, ${curStageY.toFixed(1)}px, 0)`;
     }
 
-    // ── 3. Line-level depth, opacity cascade, and word/char springs ───────────
+    // ── 3. Line-level depth, opacity cascade, and word springs ───────────────
     for (let lIdx = 0; lIdx < this.cachedLines.length; lIdx++) {
       const lineRef = this.cachedLines[lIdx];
       const lineDist = lIdx - targetLineIdx;
       const absDist = Math.abs(lineDist);
 
-      // Visibility culling (cull lines beyond ±5)
-      if (absDist > 5) {
-        lineRef.el.style.visibility = 'hidden';
+      // Visibility culling (cull lines beyond ±6)
+      if (absDist > 6) {
+        if (lineRef.lastVisibility !== 'hidden') {
+          lineRef.el.style.visibility = 'hidden';
+          lineRef.lastVisibility = 'hidden';
+        }
         continue;
       }
-      lineRef.el.style.visibility = 'visible';
+      if (lineRef.lastVisibility !== 'visible') {
+        lineRef.el.style.visibility = 'visible';
+        lineRef.lastVisibility = 'visible';
+      }
 
       // Find active word in this line if lineDist === 0
       let activeWordIdxInLine = -1;
@@ -277,7 +302,7 @@ export class AnimationEngine {
               break;
             }
           }
-          if (activeWordIdxInLine === -1) {
+          if (activeWordIdxInLine === -1 && lineRef.words.length > 0) {
             activeWordIdxInLine = lineRef.words.length - 1;
           }
         }
@@ -285,65 +310,18 @@ export class AnimationEngine {
 
       // Compute continuous floating-point focal cursor for the active line
       let focalPos = 0;
-      if (lineDist === 0 && lineRef.words.length > 0) {
+      if (lineDist === 0 && lineRef.words.length > 0 && activeWordIdxInLine >= 0) {
         const curWordRef = lineRef.words[activeWordIdxInLine];
         const curWord = curWordRef?.word;
         const wordProg = curWord
           ? Math.max(0, Math.min(1, (currentMs - curWord.startMs) / Math.max(1, curWord.durationMs)))
           : 0;
+        // Word center is activeWordIdxInLine + 0.5; cursor moves with progress
         focalPos = activeWordIdxInLine + wordProg;
       }
 
-      // Line distance cascade styling per theme
-      if (this.currentStyle === 'convex') {
-        if (lineDist === 0) {
-          lineRef.el.style.transform = 'translateZ(40px) scale(1.04)';
-          lineRef.el.style.opacity = '1.0';
-          lineRef.el.style.filter = 'none';
-        } else {
-          const curveDeg = lineDist < 0 ? -18 : 18;
-          const targetZ = -70 - absDist * 40;
-          lineRef.el.style.transform = `translateZ(${targetZ}px) rotateX(${curveDeg}deg) scale(${Math.max(0.75, 0.95 - absDist * 0.08)})`;
-          lineRef.el.style.opacity = `${Math.max(0.04, 0.35 / absDist).toFixed(2)}`;
-          lineRef.el.style.filter = `blur(${absDist * 1.8}px)`;
-        }
-      } else if (this.currentStyle === 'drift') {
-        if (lineDist === 0) {
-          // In drift mode, active line tracks horizontally in tickCamera()
-          lineRef.el.style.opacity = '1.0';
-          lineRef.el.style.filter = 'none';
-        } else {
-          lineRef.el.style.transform = `translateZ(-50px) rotateY(-5deg) scale(0.92)`;
-          lineRef.el.style.opacity = `${Math.max(0.04, 0.28 / absDist).toFixed(2)}`;
-          lineRef.el.style.filter = `blur(${absDist * 2}px)`;
-        }
-      } else if (this.currentStyle === 'editorial') {
-        if (lineDist === 0) {
-          lineRef.el.classList.add('ve-line-active');
-          lineRef.el.style.transform = 'translateZ(20px) scale(1.02)';
-          lineRef.el.style.opacity = '1.0';
-          lineRef.el.style.filter = 'none';
-          const dur = Math.max(1, lineRef.line.endMs - lineRef.line.startMs);
-          const prog = Math.max(0, Math.min(100, ((currentMs - lineRef.line.startMs) / dur) * 100));
-          lineRef.el.style.setProperty('--line-progress', `${prog.toFixed(1)}%`);
-        } else {
-          lineRef.el.classList.remove('ve-line-active');
-          lineRef.el.style.transform = 'translateZ(0px) scale(1.0)';
-          lineRef.el.style.opacity = `${Math.max(0.03, 0.32 / absDist).toFixed(2)}`;
-          lineRef.el.style.filter = `blur(${absDist * 1.5}px)`;
-        }
-      } else {
-        // semantic
-        if (lineDist === 0) {
-          lineRef.el.style.transform = 'translateZ(35px) scale(1.04)';
-          lineRef.el.style.opacity = '1.0';
-          lineRef.el.style.filter = 'none';
-        } else {
-          lineRef.el.style.transform = 'translateZ(-30px) scale(0.95)';
-          lineRef.el.style.opacity = `${Math.max(0.04, 0.30 / absDist).toFixed(2)}`;
-          lineRef.el.style.filter = `blur(${absDist * 2}px)`;
-        }
-      }
+      // Apply line-level styles per visual theme
+      this.applyLineStyles(lineRef, lineDist, absDist, currentMs);
 
       // Check words in this line
       for (let wIdx = 0; wIdx < lineRef.words.length; wIdx++) {
@@ -356,6 +334,7 @@ export class AnimationEngine {
           currentActiveWord = wordRef;
         }
 
+        // Active line and immediate neighbors get full dynamic kinematic updates
         if (absDist <= 1) {
           this.updateWordKinematics(
             wordRef,
@@ -368,34 +347,193 @@ export class AnimationEngine {
             isWordPast,
             dt
           );
-
-          // Update characters
-          for (let cIdx = 0; cIdx < wordRef.chars.length; cIdx++) {
-            this.updateCharSprings(wordRef.chars[cIdx], word, currentMs, isWordActive, isWordPast, dt);
-          }
         } else {
-          // Lines in the distance: settle fill immediately
+          // Lines in the distance: settle fill and transforms with dirty checking
           const targetFill = lineDist < 0 ? '100%' : '0%';
-          wordRef.el.style.setProperty('--char-p', targetFill);
+          if (wordRef.lastFill !== targetFill) {
+            wordRef.el.style.setProperty('--word-p', targetFill);
+            wordRef.lastFill = targetFill;
+          }
+          if (wordRef.lastTransform !== 'none') {
+            wordRef.el.style.transform = 'none';
+            wordRef.lastTransform = 'none';
+          }
+          if (wordRef.lastFilter !== 'none') {
+            wordRef.el.style.filter = 'none';
+            wordRef.lastFilter = 'none';
+          }
+          if (wordRef.lastOpacity !== '') {
+            wordRef.el.style.opacity = '';
+            wordRef.lastOpacity = '';
+          }
         }
-      }
-
-      // Update ad-libs
-      for (let aIdx = 0; aIdx < lineRef.adLibs.length; aIdx++) {
-        const adLibRef = lineRef.adLibs[aIdx];
-        const isAdLibActive = currentMs >= adLibRef.word.startMs && currentMs <= adLibRef.word.endMs;
-        const isAdLibPast = currentMs > adLibRef.word.endMs;
-        this.updateAdLibKinematics(adLibRef, isAdLibActive, isAdLibPast, dt);
       }
     }
 
     this.activeWordRef = currentActiveWord;
 
-    // ── 4. Camera Choreography (Drift style horizontal pan) ────────────────────
+    // ── 4. Camera Choreography (Drift horizontal pan) ────────────────────────
     this.tickCamera(currentActiveWord, this.cachedLines[targetLineIdx] ?? null, currentMs, dt);
 
     // ── 5. Ambient Rim Breathing (Lumn-style) ─────────────────────────────────
     this.tickRim(anyVocalActive, dt);
+  }
+
+  /**
+   * Incremental Active-Line Search: avoid linear scan of all lines every frame.
+   */
+  private findActiveLineIndex(currentMs: number): number {
+    const totalLines = this.cachedLines.length;
+    if (totalLines === 0) return 0;
+
+    let idx = this.currentActiveLineIdx;
+    if (idx < 0) idx = 0;
+    if (idx >= totalLines) idx = totalLines - 1;
+
+    const curLine = this.cachedLines[idx].line;
+
+    // Case 1: still on current line
+    if (currentMs >= curLine.startMs && currentMs <= curLine.endMs) {
+      return idx;
+    }
+
+    // Case 2: moved forward
+    if (currentMs > curLine.endMs) {
+      while (idx + 1 < totalLines) {
+        const nextLine = this.cachedLines[idx + 1].line;
+        if (currentMs < nextLine.startMs) {
+          // Between lines: stick to line just finished if recent (< 2000ms), otherwise next
+          return currentMs - curLine.endMs < 2000 ? idx : idx + 1;
+        }
+        idx++;
+        if (currentMs >= nextLine.startMs && currentMs <= nextLine.endMs) {
+          return idx;
+        }
+      }
+      return totalLines - 1;
+    }
+
+    // Case 3: moved backward (or seeked backward)
+    if (currentMs < curLine.startMs) {
+      while (idx > 0) {
+        idx--;
+        const prevLine = this.cachedLines[idx].line;
+        if (currentMs >= prevLine.startMs && currentMs <= prevLine.endMs) {
+          return idx;
+        }
+        if (currentMs > prevLine.endMs) {
+          return idx;
+        }
+      }
+      return 0;
+    }
+
+    return idx;
+  }
+
+  /**
+   * Reset future state on backward seek so lyrics don't get stuck filled.
+   */
+  private handleSeekBackward(currentMs: number): void {
+    for (let l = 0; l < this.cachedLines.length; l++) {
+      const lineRef = this.cachedLines[l];
+      if (lineRef.line.startMs > currentMs) {
+        for (let w = 0; w < lineRef.words.length; w++) {
+          const wordRef = lineRef.words[w];
+          wordRef.springProgress.reset(0, 0);
+          wordRef.springScale.reset(1.0, 0);
+          wordRef.springZ.reset(0, 0);
+          wordRef.springGravityY.reset(0, 0);
+          wordRef.el.style.setProperty('--word-p', '0%');
+          wordRef.lastFill = '0%';
+          if (wordRef.shearTopEl) wordRef.shearTopEl.style.transform = 'none';
+          if (wordRef.shearBottomEl) wordRef.shearBottomEl.style.transform = 'none';
+        }
+      }
+    }
+  }
+
+  /**
+   * Apply styles to a line with dirty checking to prevent layout reflows.
+   */
+  private applyLineStyles(
+    lineRef: CachedLineRef,
+    lineDist: number,
+    absDist: number,
+    currentMs: number
+  ): void {
+    let transform = '';
+    let opacity = '';
+    let filter = '';
+
+    if (this.currentStyle === 'convex') {
+      if (lineDist === 0) {
+        transform = 'translateZ(40px) scale(1.04)';
+        opacity = '1.0';
+        filter = 'none';
+      } else {
+        const curveDeg = lineDist < 0 ? -16 : 16;
+        const targetZ = -65 - absDist * 35;
+        const targetScale = Math.max(0.78, 0.96 - absDist * 0.07);
+        transform = `translateZ(${targetZ}px) rotateX(${curveDeg}deg) scale(${targetScale.toFixed(3)})`;
+        opacity = Math.max(0.04, 0.36 / absDist).toFixed(2);
+        filter = `blur(${Math.min(10, absDist * 1.8).toFixed(1)}px)`;
+      }
+    } else if (this.currentStyle === 'drift') {
+      if (lineDist === 0) {
+        opacity = '1.0';
+        filter = 'none';
+      } else {
+        transform = `translateZ(-50px) rotateY(-5deg) scale(0.92)`;
+        opacity = Math.max(0.04, 0.28 / absDist).toFixed(2);
+        filter = `blur(${Math.min(10, absDist * 2.0).toFixed(1)}px)`;
+      }
+    } else if (this.currentStyle === 'editorial') {
+      if (lineDist === 0) {
+        lineRef.el.classList.add('ve-line-active');
+        transform = 'translateZ(20px) scale(1.02)';
+        opacity = '1.0';
+        filter = 'none';
+        const dur = Math.max(1, lineRef.line.endMs - lineRef.line.startMs);
+        const prog = Math.max(0, Math.min(100, ((currentMs - lineRef.line.startMs) / dur) * 100));
+        const progStr = `${prog.toFixed(1)}%`;
+        if (lineRef.lastActiveProgress !== progStr) {
+          lineRef.el.style.setProperty('--line-progress', progStr);
+          lineRef.lastActiveProgress = progStr;
+        }
+      } else {
+        lineRef.el.classList.remove('ve-line-active');
+        transform = 'translateZ(0px) scale(1.0)';
+        opacity = Math.max(0.03, 0.32 / absDist).toFixed(2);
+        filter = `blur(${Math.min(8, absDist * 1.5).toFixed(1)}px)`;
+      }
+    } else {
+      // semantic
+      if (lineDist === 0) {
+        transform = 'translateZ(35px) scale(1.04)';
+        opacity = '1.0';
+        filter = 'none';
+      } else {
+        transform = 'translateZ(-30px) scale(0.95)';
+        opacity = Math.max(0.04, 0.30 / absDist).toFixed(2);
+        filter = `blur(${Math.min(10, absDist * 2.0).toFixed(1)}px)`;
+      }
+    }
+
+    if (this.currentStyle !== 'drift' || lineDist !== 0) {
+      if (lineRef.lastTransform !== transform) {
+        lineRef.el.style.transform = transform;
+        lineRef.lastTransform = transform;
+      }
+    }
+    if (lineRef.lastOpacity !== opacity) {
+      lineRef.el.style.opacity = opacity;
+      lineRef.lastOpacity = opacity;
+    }
+    if (lineRef.lastFilter !== filter) {
+      lineRef.el.style.filter = filter;
+      lineRef.lastFilter = filter;
+    }
   }
 
   // ── Word-Level Kinematics ──────────────────────────────────────────────────
@@ -413,63 +551,96 @@ export class AnimationEngine {
   ): void {
     const word = wordRef.word;
 
+    // Calculate word-level liquid fill progress
+    let targetProgress = 0.0;
+    if (isWordPast) {
+      targetProgress = 1.0;
+    } else if (isWordActive) {
+      const elapsed = currentMs - word.startMs;
+      targetProgress = Math.max(0, Math.min(1.0, elapsed / Math.max(1, word.durationMs)));
+    } else if (lineDist < 0) {
+      targetProgress = 1.0;
+    } else {
+      targetProgress = 0.0;
+    }
+
+    wordRef.springProgress.setTarget(targetProgress);
+    const curProgress = wordRef.springProgress.step(dt);
+    const fillPercentStr = `${Math.round(curProgress * 100)}%`;
+
+    if (wordRef.lastFill !== fillPercentStr) {
+      wordRef.el.style.setProperty('--word-p', fillPercentStr);
+      wordRef.lastFill = fillPercentStr;
+    }
+
+    let transform = '';
+    let filter = '';
+    let opacity = '';
+
     switch (this.currentStyle) {
       case 'convex': {
         if (lineDist === 0) {
-          // Continuous floating-point distance from optical focal point
-          const dist = wordIdxInLine - focalPos;
+          // Distance from word center (wordIdxInLine + 0.5) to focal point
+          const dist = (wordIdxInLine + 0.5) - focalPos;
           const absDist = Math.abs(dist);
 
           // Gaussian optical magnification curve
-          const targetScale = 1.0 + 0.35 * Math.exp(-dist * dist * 0.45);
-          const targetZ = 95 * Math.exp(-dist * dist * 0.4) - 35;
-          const rotateY = Math.max(-36, Math.min(36, dist * 16));
-          const blur = Math.max(0, (absDist - 0.45) * 2.2);
-          const opacity = Math.max(0.24, 1.0 - absDist * 0.22);
+          const targetScale = 1.0 + 0.32 * Math.exp(-dist * dist * 0.45);
+          const targetZ = 90 * Math.exp(-dist * dist * 0.4) - 30;
+          const rotateY = Math.max(-32, Math.min(32, dist * 14));
+          const blur = Math.max(0, (absDist - 0.7) * 2.4);
+          opacity = Math.max(0.24, 1.0 - absDist * 0.20).toFixed(2);
 
-          wordRef.el.style.transform = `translateZ(${targetZ.toFixed(1)}px) scale(${targetScale.toFixed(3)}) rotateY(${rotateY.toFixed(1)}deg)`;
-          wordRef.el.style.filter = blur > 0.1 ? `blur(${blur.toFixed(1)}px)` : (absDist < 0.4 ? 'drop-shadow(0 0 16px var(--ve-primary))' : 'none');
-          wordRef.el.style.opacity = opacity.toFixed(2);
+          // Perspective(900px) INSIDE transform prevents Chromium 3D flattening
+          transform = `perspective(900px) translateZ(${targetZ.toFixed(1)}px) scale(${targetScale.toFixed(3)}) rotateY(${rotateY.toFixed(1)}deg)`;
+
+          // Continuous organic bloom without sudden pop
+          const bloomIntensity = Math.exp(-dist * dist * 2.2);
+          if (bloomIntensity > 0.08) {
+            filter = `drop-shadow(0 0 ${(bloomIntensity * 18).toFixed(1)}px var(--ve-primary))`;
+          } else if (blur > 0.1) {
+            filter = `blur(${blur.toFixed(1)}px)`;
+          } else {
+            filter = 'none';
+          }
         } else {
-          wordRef.el.style.transform = 'translateZ(0px) scale(1.0)';
-          wordRef.el.style.filter = 'none';
-          wordRef.el.style.opacity = '';
+          transform = 'perspective(900px) translateZ(0px) scale(1.0)';
+          filter = 'none';
+          opacity = '';
         }
         break;
       }
 
       case 'drift': {
         if (isWordActive) {
-          wordRef.springScale.setTarget(1.18);
-          wordRef.springZ.setTarget(45);
+          wordRef.springScale.setTarget(1.15);
+          wordRef.springZ.setTarget(40);
         } else {
           wordRef.springScale.setTarget(1.0);
           wordRef.springZ.setTarget(0);
         }
         const curScale = wordRef.springScale.step(dt);
         const curZ = wordRef.springZ.step(dt);
-        wordRef.el.style.transform = `translateZ(${curZ.toFixed(1)}px) scale(${curScale.toFixed(3)})`;
-        wordRef.el.style.filter = isWordActive ? 'drop-shadow(0 0 20px var(--ve-primary)) drop-shadow(0 0 45px var(--ve-secondary))' : 'none';
-        wordRef.el.style.opacity = isWordActive ? '1.0' : isWordPast ? '0.85' : '0.35';
+        transform = `translateZ(${curZ.toFixed(1)}px) scale(${curScale.toFixed(3)})`;
+        filter = isWordActive
+          ? 'drop-shadow(0 0 20px var(--ve-primary)) drop-shadow(0 0 45px var(--ve-secondary))'
+          : 'none';
+        opacity = isWordActive ? '1.0' : isWordPast ? '0.85' : '0.35';
         break;
       }
 
       case 'editorial': {
-        wordRef.el.style.opacity = isWordActive ? '1.0' : isWordPast ? '0.78' : '0.24';
+        opacity = isWordActive ? '1.0' : isWordPast ? '0.78' : '0.24';
         if (word.isMelisma && isWordActive) {
-          const timeDeltaMs = currentMs - word.startMs;
-          const melismaProgress = Math.min(1.0, Math.max(0, timeDeltaMs / word.durationMs));
-          const extraSpacing = (melismaProgress * 0.22).toFixed(3);
-          wordRef.el.style.letterSpacing = `${extraSpacing}em`;
-          wordRef.el.style.transform = `translateY(-4px) scale(1.06)`;
+          // Melisma stretch: Use GPU scaleX instead of reflowing letter-spacing!
+          const melismaScaleX = 1.0 + Math.min(0.20, curProgress * 0.20);
+          transform = `translateY(-3px) scale(${melismaScaleX.toFixed(3)}, 1.05)`;
         } else if (isWordActive) {
-          wordRef.el.style.transform = 'translateY(-3px) scale(1.05)';
-          wordRef.el.style.letterSpacing = '';
+          transform = 'translateY(-3px) scale(1.04)';
         } else {
-          wordRef.el.style.transform = 'translateY(0) scale(1.0)';
-          wordRef.el.style.letterSpacing = '';
+          transform = 'translateY(0) scale(1.0)';
         }
-        wordRef.el.style.filter = 'none';
+        filter = 'none';
         break;
       }
 
@@ -478,26 +649,41 @@ export class AnimationEngine {
         let extraFilter = '';
 
         if (word.semanticEffect === 'GRAVITY') {
-          wordRef.springGravityY.setTarget(isWordActive ? 36 : 0);
+          wordRef.springGravityY.setTarget(isWordActive ? 32 : 0);
           const curSinkY = wordRef.springGravityY.step(dt);
-          const curTilt = (curSinkY / 36) * 6;
+          const curTilt = (curSinkY / 32) * 5;
           extraTransform = ` translateY(${curSinkY.toFixed(1)}px) rotate(${curTilt.toFixed(1)}deg)`;
         } else if (word.semanticEffect === 'PULSE') {
           if (isWordActive) {
-            extraFilter = 'drop-shadow(0 0 20px var(--ve-primary)) drop-shadow(0 0 50px var(--ve-secondary))';
-            extraTransform = ' scale(1.22)';
+            extraFilter = 'drop-shadow(0 0 20px var(--ve-primary)) drop-shadow(0 0 45px var(--ve-secondary))';
+            extraTransform = ' scale(1.20)';
+          }
+        } else if (word.semanticEffect === 'FRACTURE') {
+          if (curProgress > 0.35) {
+            const shear = ((curProgress - 0.35) / 0.65) * 5;
+            if (wordRef.shearTopEl) wordRef.shearTopEl.style.transform = `translate(${shear.toFixed(1)}px, -1px)`;
+            if (wordRef.shearBottomEl) wordRef.shearBottomEl.style.transform = `translate(-${shear.toFixed(1)}px, 1px)`;
+          } else {
+            if (wordRef.shearTopEl) wordRef.shearTopEl.style.transform = 'none';
+            if (wordRef.shearBottomEl) wordRef.shearBottomEl.style.transform = 'none';
+          }
+        } else if (word.semanticEffect === 'FADE') {
+          if (curProgress > 0.2) {
+            const smokeProgress = (curProgress - 0.2) / 0.8;
+            extraFilter = `blur(${(smokeProgress * 6).toFixed(1)}px)`;
+            extraTransform = ` translateY(-${(smokeProgress * 12).toFixed(1)}px)`;
           }
         } else if (isWordActive) {
-          extraTransform = ' translateY(-6px) scale(1.10)';
+          extraTransform = ' translateY(-5px) scale(1.08)';
         }
 
         if (word.semanticEffect === 'ECHO' && wordRef.echoClones && wordRef.echoClones.length >= 2) {
           if (isWordActive) {
-            const progress = (performance.now() % 750) / 750;
-            const c1Scale = 1.0 + progress * 0.30;
-            const c1Opacity = 0.6 * (1 - progress);
-            const c2Scale = 1.0 + progress * 0.60;
-            const c2Opacity = 0.3 * (1 - progress);
+            const cycle = (performance.now() % 800) / 800;
+            const c1Scale = 1.0 + cycle * 0.30;
+            const c1Opacity = 0.6 * (1 - cycle);
+            const c2Scale = 1.0 + cycle * 0.60;
+            const c2Opacity = 0.3 * (1 - cycle);
             wordRef.echoClones[0].style.transform = `scale(${c1Scale.toFixed(3)})`;
             wordRef.echoClones[0].style.opacity = c1Opacity.toFixed(2);
             wordRef.echoClones[1].style.transform = `scale(${c2Scale.toFixed(3)})`;
@@ -508,88 +694,24 @@ export class AnimationEngine {
           }
         }
 
-        wordRef.el.style.transform = extraTransform || 'none';
-        wordRef.el.style.filter = extraFilter;
-        wordRef.el.style.opacity = isWordActive ? '1.0' : isWordPast ? '0.70' : '0.25';
+        transform = extraTransform || 'none';
+        filter = extraFilter;
+        opacity = isWordActive ? '1.0' : isWordPast ? '0.70' : '0.25';
         break;
       }
     }
-  }
 
-  // ── Character-Level Spring Solver ──────────────────────────────────────────
-
-  private updateCharSprings(
-    charRef: CachedCharRef,
-    word: LyricWord,
-    currentMs: number,
-    isWordActive: boolean,
-    isWordPast: boolean,
-    dt: number
-  ): void {
-    const char = charRef.char;
-    const isCharActive = currentMs >= char.startMs && currentMs <= char.endMs;
-    const isCharPast   = currentMs > char.endMs;
-
-    const charProgress = isCharPast ? 1.0
-      : isCharActive
-        ? Math.max(0, Math.min(1, (currentMs - char.startMs) / Math.max(1, char.durationMs)))
-        : 0.0;
-
-    // Target spring values
-    const targetY        = isCharActive ? -4   : 0;
-    const targetScale    = isCharActive ? 1.08 : 1.0;
-    const targetProgress = charProgress;
-    const targetGlow     = isCharActive ? 1.0  : 0.0;
-
-    charRef.springY.setTarget(targetY);
-    charRef.springScale.setTarget(targetScale);
-    charRef.springProgress.setTarget(targetProgress);
-    charRef.springGlow.setTarget(targetGlow);
-
-    const curY     = charRef.springY.step(dt);
-    const curScale = charRef.springScale.step(dt);
-    const curFill  = charRef.springProgress.step(dt);
-    const curGlow  = charRef.springGlow.step(dt);
-
-    // Apply sub-pixel liquid sweep gradient
-    const fillPercent = Math.round(curFill * 100);
-    charRef.el.style.setProperty('--char-p', `${fillPercent}%`);
-    charRef.el.style.setProperty('--char-glow', curGlow.toFixed(3));
-
-    let extraTransform = '';
-    let extraFilter = '';
-
-    if (this.currentStyle === 'semantic' && (isCharActive || isCharPast)) {
-      switch (word.semanticEffect) {
-        case 'FRACTURE':
-          if (curFill > 0.4) {
-            const shear = ((curFill - 0.4) / 0.6) * 4;
-            if (charRef.shearTopEl) charRef.shearTopEl.style.transform = `translate(${shear.toFixed(1)}px, -1px)`;
-            if (charRef.shearBottomEl) charRef.shearBottomEl.style.transform = `translate(-${shear.toFixed(1)}px, 1px)`;
-          }
-          break;
-
-        case 'FADE':
-          if (curFill > 0.2) {
-            const smokeProgress = (curFill - 0.2) / 0.8;
-            extraFilter = `blur(${(smokeProgress * 6).toFixed(1)}px)`;
-            extraTransform = ` translateY(-${(smokeProgress * 12).toFixed(1)}px)`;
-          }
-          break;
-
-        case 'PULSE':
-          if (isCharActive) {
-            extraFilter = `drop-shadow(0 0 ${(curGlow * 12).toFixed(1)}px var(--ve-primary))`;
-          }
-          break;
-      }
+    if (wordRef.lastTransform !== transform) {
+      wordRef.el.style.transform = transform;
+      wordRef.lastTransform = transform;
     }
-
-    charRef.el.style.transform = `translateY(${curY.toFixed(1)}px) scale(${curScale.toFixed(3)})${extraTransform}`;
-    if (extraFilter) {
-      charRef.el.style.filter = extraFilter;
-    } else if (charRef.el.style.filter) {
-      charRef.el.style.filter = '';
+    if (wordRef.lastFilter !== filter) {
+      wordRef.el.style.filter = filter;
+      wordRef.lastFilter = filter;
+    }
+    if (wordRef.lastOpacity !== opacity) {
+      wordRef.el.style.opacity = opacity;
+      wordRef.lastOpacity = opacity;
     }
   }
 
@@ -604,7 +726,7 @@ export class AnimationEngine {
     if (!this.cameraEl || !this.lyricsContainerEl) return;
 
     if (this.currentStyle === 'drift' && activeWord && activeLineRef) {
-      // Invariant horizontal tracking of the active word across the marquee ribbon
+      // Continuous horizontal tracking without line snapping:
       const wordLeft = activeWord.cachedOffsetLeft ?? activeWord.el.offsetLeft;
       const wordWidth = activeWord.cachedWidth ?? activeWord.el.offsetWidth;
       const wordProg = Math.max(0, Math.min(1, (currentMs - activeWord.word.startMs) / Math.max(1, activeWord.word.durationMs)));
@@ -636,25 +758,5 @@ export class AnimationEngine {
     this.rimRadiusSpring.setTarget(targetRadius);
     const curRadius = this.rimRadiusSpring.step(dt);
     this.ambientRimEl.style.setProperty('--ve-rim-size', `${curRadius.toFixed(0)}px`);
-  }
-
-  // ── Ad-Lib Kinematics ──────────────────────────────────────────────────────
-
-  private updateAdLibKinematics(
-    adLibRef: CachedWordRef,
-    isAdLibActive: boolean,
-    isAdLibPast: boolean,
-    dt: number
-  ): void {
-    adLibRef.springZ.setTarget(isAdLibActive ? -40 : -80);
-    adLibRef.springBlur.setTarget(isAdLibActive ? 0.8 : 2.0);
-
-    const curZ    = adLibRef.springZ.step(dt);
-    const curBlur = adLibRef.springBlur.step(dt);
-    const opacity = isAdLibActive ? '0.75' : isAdLibPast ? '0.35' : '0.16';
-
-    adLibRef.el.style.opacity = opacity;
-    adLibRef.el.style.transform = `translateZ(${curZ.toFixed(1)}px)`;
-    adLibRef.el.style.filter = `blur(${curBlur.toFixed(1)}px)`;
   }
 }

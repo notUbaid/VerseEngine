@@ -1,3 +1,14 @@
+/**
+ * app.ts — VERSE//ENGINE Main Extension Orchestrator
+ *
+ * Integrates:
+ *   - Spicetify Player APIs & Events
+ *   - Liquid WebGL Post-Processing Pipeline
+ *   - Harmonic Spring Physics Animation Core
+ *   - Dynamic Ambient Palette & Rim Lighting
+ *   - Multi-Tier Lyric Provider (Spotify Canvas/Synced -> LRCLIB Fallback)
+ */
+
 import {
   ProcessedTrack,
   VisualStyle,
@@ -23,7 +34,7 @@ const VERSE_ICON_SVG = `
 
 // ─── VerseEngineApp — Singleton Orchestrator ──────────────────────────────────
 
-class VerseEngineApp {
+export class VerseEngineApp {
   private static instance: VerseEngineApp | null = null;
 
   private isOpen: boolean = false;
@@ -41,13 +52,14 @@ class VerseEngineApp {
   private currentPaletteType: PaletteType = 'album';
   private currentPalette: PaletteColors | null = null;
   private rimEnabled: boolean = true;
+  private boundKeyDownListener: ((e: KeyboardEvent) => void) | null = null;
 
   private constructor() {
-    this.bindKeyboardShortcuts();
     this.animationEngine = new AnimationEngine();
     this.webgl           = new WebGLPostProcess();
     this.lyricProvider   = LyricProvider.getInstance();
     this.clock           = Clock.getInstance();
+    this.bindKeyboardShortcuts();
     this.boot();
   }
 
@@ -61,7 +73,7 @@ class VerseEngineApp {
   // ── Boot sequence ──────────────────────────────────────────────────────────
 
   private async boot(): Promise<void> {
-    console.log('[VerseEngine] v2.1 — 144Hz kinetic typography engine booting…');
+    console.log('[VerseEngine] v2.0.0 — 144Hz kinetic typography engine booting…');
     await this.waitForSpicetify();
     this.injectButtons();
     this.bindTrackChangeListener();
@@ -83,8 +95,8 @@ class VerseEngineApp {
           (Spicetify.Player as any).origin?._state
         ) {
           resolve();
-        } else if (attempts > 60) {
-          // Resolve after 6s fallback so nothing hangs indefinitely
+        } else if (attempts > 50) {
+          // Resolve after 5s fallback so nothing hangs indefinitely
           resolve();
         } else {
           setTimeout(check, 100);
@@ -100,7 +112,7 @@ class VerseEngineApp {
     let retries = 0;
     const tryInject = () => {
       if (typeof Spicetify === 'undefined') {
-        if (++retries < 20) setTimeout(tryInject, 400);
+        if (++retries < 15) setTimeout(tryInject, 400);
         return;
       }
 
@@ -121,7 +133,7 @@ class VerseEngineApp {
         }
       }
 
-      // 2. Top Bar Button
+      // 2. Top Bar Button (only if Topbar API is supported in current Spicetify version)
       if (!this.topbarButton && (Spicetify as any).Topbar?.Button) {
         try {
           this.topbarButton = new (Spicetify as any).Topbar.Button(
@@ -137,7 +149,7 @@ class VerseEngineApp {
         }
       }
 
-      if ((!this.playbarButton || !this.topbarButton) && ++retries < 20) {
+      if (!this.playbarButton && ++retries < 15) {
         setTimeout(tryInject, 600);
       }
     };
@@ -148,7 +160,11 @@ class VerseEngineApp {
   // ── Keyboard Shortcuts ─────────────────────────────────────────────────────
 
   private bindKeyboardShortcuts(): void {
-    window.addEventListener('keydown', (e: KeyboardEvent) => {
+    if (this.boundKeyDownListener) {
+      window.removeEventListener('keydown', this.boundKeyDownListener);
+    }
+
+    this.boundKeyDownListener = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && this.isOpen) {
         e.preventDefault();
         this.closeStage();
@@ -159,9 +175,11 @@ class VerseEngineApp {
         const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
         if (tag !== 'input' && tag !== 'textarea') {
           e.preventDefault();
-          // Passthrough spacebar to Spotify play/pause
+          // Passthrough spacebar to Spotify play/pause via official API
           if (typeof Spicetify !== 'undefined' && Spicetify.Player) {
-            if (Spicetify.Player.isPlaying()) {
+            if (typeof (Spicetify.Player as any).togglePlay === 'function') {
+              (Spicetify.Player as any).togglePlay();
+            } else if (Spicetify.Player.isPlaying()) {
               (Spicetify.Player as any).pause?.();
             } else {
               (Spicetify.Player as any).play?.();
@@ -169,7 +187,9 @@ class VerseEngineApp {
           }
         }
       }
-    });
+    };
+
+    window.addEventListener('keydown', this.boundKeyDownListener);
   }
 
   // ── Track Change ───────────────────────────────────────────────────────────
@@ -245,9 +265,14 @@ class VerseEngineApp {
       onClose: () => this.closeStage()
     });
 
+    // Sync saved initial preferences from StageView
+    this.currentStyle = this.stageView.getSavedStyle();
+    this.currentPaletteType = this.stageView.getSavedPaletteType();
+    this.rimEnabled = this.stageView.getSavedRimEnabled();
+
     const { rootEl, cameraEl, ambientRimEl, lyricsContainerEl } = this.stageView.mount();
 
-    // Try to mount WebGL post-process overlay
+    // Mount WebGL post-process overlay
     this.webgl.mount(rootEl);
     this.animationEngine.bindWebgl(this.webgl);
 

@@ -2,11 +2,11 @@
  * WebGLPostProcess.ts — VERSE//ENGINE Ethereal Liquid Aurora Mesh Background
  *
  * Implements Apple Music & Verci-grade out-of-focus ambient aurora:
- *   1. Massive, soft Gaussian color orbs orbiting on smooth Lissajous curves (ZERO high-frequency marble noise)
- *   2. Deep velvety OLED base tone ensuring 100% contrast & razor-sharp lyrics legibility
- *   3. Responsive vocal energy (subtle aura expansion during sung lines)
- *   4. Cinematic 35mm dither to eliminate 8-bit gradient banding
- *   5. Ultra-low GPU overhead running locked at 120Hz/144Hz
+ *   1. Monotonic CPU phase accumulation (ZERO jumping/teleporting on vocal swells)
+ *   2. Soft Gaussian color orbs orbiting on smooth Lissajous curves
+ *   3. Editorial mode light-theme bypass (warm cream #FAF9F6 never obscured)
+ *   4. Native resolution 35mm dither to eliminate 8-bit gradient banding
+ *   5. Full lifecycle handling (context loss, resize, visibility changes)
  */
 
 import { PaletteColors } from '../types/lyrics';
@@ -28,13 +28,13 @@ precision highp float;
 in vec2 v_uv;
 out vec4 fragColor;
 
-uniform float u_time;
+uniform float u_time;             // Monotonic accumulated phase from CPU
 uniform float u_vocalIntensity;
 uniform vec2  u_resolution;
-uniform vec3  u_color1; // Album primary (vibrant)
-uniform vec3  u_color2; // Album secondary (contrasting tone)
-uniform vec3  u_color3; // Highlight accent
-uniform vec3  u_color4; // Deep base tone
+uniform vec3  u_color1;           // Album primary (vibrant)
+uniform vec3  u_color2;           // Album secondary (contrasting tone)
+uniform vec3  u_color3;           // Highlight accent
+uniform vec3  u_color4;           // Deep base atmospheric tone
 
 // Fine 35mm film grain dither to eliminate color banding
 float dither(vec2 uv) {
@@ -46,11 +46,9 @@ void main() {
   // Center-normalized coordinates [-1, 1], aspect-ratio corrected
   vec2 p = (gl_FragCoord.xy * 2.0 - u_resolution) / min(u_resolution.x, u_resolution.y);
 
-  // Slow, serene time evolution
-  float t = u_time * (0.12 + u_vocalIntensity * 0.06);
+  float t = u_time;
 
   // 4 large, soft, luminous color orbs orbiting on smooth Lissajous curves
-  // (Zero high-frequency noise, zero marble veins — pure soft optical bokeh)
   vec2 c1 = vec2(sin(t * 0.70) * 0.55, cos(t * 0.50) * 0.45);
   vec2 c2 = vec2(cos(t * 0.60 + 1.8) * 0.65, sin(t * 0.80 + 0.5) * 0.50);
   vec2 c3 = vec2(sin(t * 0.45 + 3.2) * 0.50, cos(t * 0.70 + 2.1) * 0.60);
@@ -58,8 +56,8 @@ void main() {
 
   // Gentle wave distortion (very low frequency: wavelength is screen-sized)
   vec2 pWarp = p + vec2(
-    sin(p.y * 1.2 + t * 0.5) * 0.12,
-    cos(p.x * 1.2 + t * 0.4) * 0.12
+    sin(p.y * 1.2 + t * 0.5) * 0.10,
+    cos(p.x * 1.2 + t * 0.4) * 0.10
   );
 
   // Soft Gaussian falloffs (massive radii: sigma ~ 0.8 to 1.2)
@@ -73,26 +71,23 @@ void main() {
   float w3 = exp(-d3 * d3 * 1.4);
   float w4 = exp(-d4 * d4 * 1.0);
 
-  // Start with velvety OLED dark base (85-90% dark)
-  vec3 base = u_color4 * 0.40;
+  // Deep atmospheric base from album palette
+  vec3 base = u_color4;
 
   // Add warm, soft, out-of-focus luminous pools of color
   vec3 col = base;
-  col += u_color1 * (w1 * 0.48 + u_vocalIntensity * 0.12);
-  col += u_color2 * (w2 * 0.38);
-  col += u_color3 * (w3 * 0.20);
-  col += u_color1 * (w4 * 0.32);
+  col += u_color1 * (w1 * 0.52 + u_vocalIntensity * 0.14);
+  col += u_color2 * (w2 * 0.42);
+  col += u_color3 * (w3 * 0.22);
+  col += u_color1 * (w4 * 0.34);
 
-  // Cap overall background luminance so white lyrics text ALWAYS has 8:1+ contrast
-  col = clamp(col, 0.0, 0.52);
-
-  // Subtle natural vignette to draw focus to center lyrics
+  // Natural vignette to draw focus to center lyrics
   vec2 center = uv - 0.5;
-  float vig = clamp(1.0 - dot(center, center) * 1.2, 0.0, 1.0);
-  col *= (0.70 + 0.30 * vig);
+  float vig = clamp(1.0 - dot(center, center) * 1.15, 0.0, 1.0);
+  col *= (0.75 + 0.25 * vig);
 
-  // Fine 35mm film grain dither (prevents color banding, adds tactile film texture)
-  col += (dither(gl_FragCoord.xy) - 0.5) * 0.016;
+  // Native resolution 35mm film grain dither
+  col += (dither(gl_FragCoord.xy) - 0.5) * 0.018;
 
   fragColor = vec4(col, 1.0);
 }`;
@@ -103,7 +98,8 @@ export class WebGLPostProcess {
   private program: WebGLProgram | null = null;
   private vao: WebGLVertexArrayObject | null = null;
   private rafId: number | null = null;
-  private startTime: number = performance.now();
+  private lastTime: number = performance.now();
+  private phase: number = 0; // Monotonic accumulated phase
 
   // Uniform locations
   private u_time: WebGLUniformLocation | null = null;
@@ -117,12 +113,13 @@ export class WebGLPostProcess {
   private vocalIntensity: number = 0;
   private targetVocalIntensity: number = 0;
   private supported: boolean = false;
+  private currentPalette: PaletteColors | null = null;
 
   // Cached color vectors [r, g, b] in 0..1
-  private c1: [number, number, number] = [0.22, 0.04, 0.07];
-  private c2: [number, number, number] = [0.55, 0.11, 0.18];
-  private c3: [number, number, number] = [0.88, 0.24, 0.32];
-  private c4: [number, number, number] = [0.04, 0.03, 0.03];
+  private c1: [number, number, number] = [0.35, 0.08, 0.12];
+  private c2: [number, number, number] = [0.65, 0.15, 0.22];
+  private c3: [number, number, number] = [0.95, 0.35, 0.42];
+  private c4: [number, number, number] = [0.06, 0.04, 0.05];
 
   public mount(containerEl: HTMLElement): boolean {
     this.canvas = document.createElement('canvas');
@@ -135,7 +132,7 @@ export class WebGLPostProcess {
       pointer-events: none;
       z-index: 1;
       opacity: 0.95;
-      transition: opacity 0.5s ease;
+      transition: opacity 0.4s ease;
     `;
 
     // Prepend so canvas sits behind all text layers
@@ -158,6 +155,18 @@ export class WebGLPostProcess {
         console.warn('[VerseEngine] WebGL2 not available, falling back to CSS.');
         return false;
       }
+
+      this.canvas.addEventListener('webglcontextlost', (e) => {
+        e.preventDefault();
+        this.stop();
+        console.warn('[VerseEngine] WebGL context lost.');
+      });
+
+      this.canvas.addEventListener('webglcontextrestored', () => {
+        console.log('[VerseEngine] WebGL context restored.');
+        this.initShaders();
+        this.start();
+      });
 
       this.initShaders();
       this.resize();
@@ -191,9 +200,9 @@ export class WebGLPostProcess {
 
   private resize(): void {
     if (!this.canvas || !this.gl) return;
-    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
-    const w = Math.floor(window.innerWidth * dpr * 0.5);
-    const h = Math.floor(window.innerHeight * dpr * 0.5);
+    const dpr = Math.min(window.devicePixelRatio || 1, 2.0);
+    const w = Math.floor(window.innerWidth * dpr);
+    const h = Math.floor(window.innerHeight * dpr);
 
     if (this.canvas.width !== w || this.canvas.height !== h) {
       this.canvas.width = w;
@@ -219,7 +228,6 @@ export class WebGLPostProcess {
 
     this.program = prog;
 
-    // Uniform locations
     this.u_time           = gl.getUniformLocation(prog, 'u_time');
     this.u_vocalIntensity = gl.getUniformLocation(prog, 'u_vocalIntensity');
     this.u_resolution     = gl.getUniformLocation(prog, 'u_resolution');
@@ -228,7 +236,6 @@ export class WebGLPostProcess {
     this.u_color3         = gl.getUniformLocation(prog, 'u_color3');
     this.u_color4         = gl.getUniformLocation(prog, 'u_color4');
 
-    // Fullscreen quad
     const quadVertices = new Float32Array([
       -1, -1,
        1, -1,
@@ -268,6 +275,13 @@ export class WebGLPostProcess {
   }
 
   public setPalette(palette: PaletteColors): void {
+    this.currentPalette = palette;
+
+    // For light palettes (Editorial bone & maroon), hide the dark WebGL canvas
+    if (this.canvas) {
+      this.canvas.style.opacity = palette.isDark ? '0.95' : '0.0';
+    }
+
     const parseRgb = (c: string): [number, number, number] => {
       const rgb = c.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
       if (rgb) {
@@ -298,20 +312,31 @@ export class WebGLPostProcess {
 
   public start(): void {
     if (!this.supported || this.rafId !== null) return;
-    this.startTime = performance.now();
+    this.lastTime = performance.now();
 
     const render = (now: number) => {
       if (!this.gl || !this.program || !this.canvas) return;
 
-      const gl = this.gl;
-      const t = (now - this.startTime) / 1000;
+      const rawDt = (now - this.lastTime) / 1000;
+      const dt = Math.max(0.001, Math.min(rawDt, 0.05));
+      this.lastTime = now;
+
+      // Skip GPU draw if canvas is hidden in light mode
+      if (this.currentPalette && !this.currentPalette.isDark) {
+        this.rafId = requestAnimationFrame(render);
+        return;
+      }
 
       // Smooth vocal energy transition
       this.vocalIntensity += (this.targetVocalIntensity - this.vocalIntensity) * 0.08;
 
+      // MONOTONIC PHASE ACCUMULATION: avoids any jumping when vocal intensity changes
+      this.phase += dt * (0.12 + this.vocalIntensity * 0.06);
+
+      const gl = this.gl;
       gl.useProgram(this.program);
 
-      gl.uniform1f(this.u_time, t);
+      gl.uniform1f(this.u_time, this.phase);
       gl.uniform1f(this.u_vocalIntensity, this.vocalIntensity);
       gl.uniform2f(this.u_resolution, this.canvas.width, this.canvas.height);
 

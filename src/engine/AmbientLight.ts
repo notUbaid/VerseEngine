@@ -2,10 +2,10 @@ import { PaletteColors, PaletteType } from '../types/lyrics';
 
 /**
  * AmbientLight.ts
- * Lumn-style ambient rim lighting and 3-color album art palette engine.
- * Inspired by trylumn.xyz and verci.xyz:
- * - 60% Primary / 30% Secondary / 10% Highlight
- * - Full-viewport inner bezel ambient rim bleed that breathes with vocal activity
+ * Quantized album art palette engine and Lumn-style ambient rim colors.
+ * - Extracts vibrant Primary (60%), harmonizing Secondary (30%), and crisp Highlight (10%)
+ * - Population-weighted color quantization with contrast guarantees
+ * - Supports spotify:image: URI resolution to https://i.scdn.co/image/<id>
  */
 
 export class AmbientLight {
@@ -14,11 +14,11 @@ export class AmbientLight {
   public static getEditorialPalette(): PaletteColors {
     return {
       type: 'editorial',
-      primary: '#5C1421',
-      secondary: '#8C1D2E',
-      highlight: '#FAF9F6',
-      bg: '#FAF9F6',
-      textInactive: 'rgba(92, 20, 33, 0.22)',
+      primary: '#5C1421',       // Rich Oxblood Maroon
+      secondary: '#8C1D2E',     // Deep Crimson
+      highlight: '#180407',     // High-contrast ink
+      bg: '#FAF9F6',            // Warm Bone Cream
+      textInactive: 'rgba(92, 20, 33, 0.28)',
       isDark: false
     };
   }
@@ -27,15 +27,24 @@ export class AmbientLight {
     return {
       type: 'obsidian',
       primary: '#FAF9F6',
-      secondary: '#7A1C2D',
+      secondary: '#8C1D2E',
       highlight: '#FAF9F6',
       bg: '#0A0808',
-      textInactive: 'rgba(250, 249, 246, 0.24)',
+      textInactive: 'rgba(250, 249, 246, 0.28)',
       isDark: true
     };
   }
 
-  public static async extractAlbumPalette(imageUrl: string): Promise<PaletteColors> {
+  public static resolveImageUrl(url: string | undefined): string {
+    if (!url) return '';
+    if (url.startsWith('spotify:image:')) {
+      return `https://i.scdn.co/image/${url.replace('spotify:image:', '')}`;
+    }
+    return url;
+  }
+
+  public static async extractAlbumPalette(rawUrl: string): Promise<PaletteColors> {
+    const imageUrl = AmbientLight.resolveImageUrl(rawUrl);
     if (!imageUrl) {
       return this.getObsidianPalette();
     }
@@ -45,6 +54,30 @@ export class AmbientLight {
     }
 
     return new Promise((resolve) => {
+      // 1. If Spicetify.colorExtractor is available natively, check it
+      if (typeof Spicetify !== 'undefined' && (Spicetify as any).colorExtractor) {
+        try {
+          const colors = (Spicetify as any).colorExtractor(imageUrl);
+          if (colors && colors.VIBRANT) {
+            const pal: PaletteColors = {
+              type: 'album',
+              primary: colors.VIBRANT,
+              secondary: colors.DARK_VIBRANT || colors.LIGHT_VIBRANT || '#8C1D2E',
+              highlight: '#FAF9F6',
+              bg: colors.DARK_MUTED || '#0A0808',
+              textInactive: 'rgba(250, 249, 246, 0.28)',
+              isDark: true
+            };
+            this.cachedPalettes.set(imageUrl, pal);
+            resolve(pal);
+            return;
+          }
+        } catch {
+          // Fall through to manual canvas extraction
+        }
+      }
+
+      // 2. Offscreen Canvas Quantization
       const img = new Image();
       img.crossOrigin = 'Anonymous';
 
@@ -57,66 +90,87 @@ export class AmbientLight {
             return;
           }
 
-          canvas.width = 36;
-          canvas.height = 36;
-          ctx.drawImage(img, 0, 0, 36, 36);
+          const size = 48;
+          canvas.width = size;
+          canvas.height = size;
+          ctx.drawImage(img, 0, 0, size, size);
 
-          const data = ctx.getImageData(0, 0, 36, 36).data;
-          interface ColorScore {
+          const data = ctx.getImageData(0, 0, size, size).data;
+
+          interface Bucket {
             r: number;
             g: number;
             b: number;
+            count: number;
             sat: number;
             lum: number;
-            count: number;
           }
 
-          const samples: ColorScore[] = [];
+          // Quantize into 16-color RGB buckets (4 bits per channel)
+          const bucketMap = new Map<number, Bucket>();
 
           for (let i = 0; i < data.length; i += 4) {
             const r = data[i];
             const g = data[i + 1];
             const b = data[i + 2];
 
-            const max = Math.max(r, g, b);
-            const min = Math.min(r, g, b);
-            const sat = max === 0 ? 0 : (max - min) / max;
-            const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+            // Quantize to 32-step buckets
+            const qr = Math.floor(r / 24) * 24;
+            const qg = Math.floor(g / 24) * 24;
+            const qb = Math.floor(b / 24) * 24;
+            const key = (qr << 16) | (qg << 8) | qb;
 
-            // Filter out muddy/washed out grays
-            if (sat > 0.18 && lum > 0.15 && lum < 0.90) {
-              samples.push({ r, g, b, sat, lum, count: 1 });
+            const existing = bucketMap.get(key);
+            if (existing) {
+              existing.count++;
+            } else {
+              const max = Math.max(r, g, b);
+              const min = Math.min(r, g, b);
+              const sat = max === 0 ? 0 : (max - min) / max;
+              const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+              bucketMap.set(key, { r, g, b, count: 1, sat, lum });
             }
           }
 
-          if (samples.length === 0) {
+          const buckets = Array.from(bucketMap.values());
+          // Filter out near-pure blacks, near-whites, and completely unsaturated mud
+          const candidateColors = buckets.filter(
+            b => b.sat > 0.16 && b.lum > 0.12 && b.lum < 0.88
+          );
+
+          if (candidateColors.length === 0) {
             resolve(this.getObsidianPalette());
             return;
           }
 
-          // Sort by saturation and pick vibrant Primary (60%) and harmonizing Secondary (30%)
-          samples.sort((a, b) => b.sat - a.sat);
-          const primarySample = samples[0];
+          // Score buckets: balance population count and saturation (60/30/10 rule)
+          candidateColors.sort((a, b) => {
+            const scoreA = Math.pow(a.count, 0.6) * Math.pow(a.sat, 1.2) * (1 - Math.abs(a.lum - 0.55));
+            const scoreB = Math.pow(b.count, 0.6) * Math.pow(b.sat, 1.2) * (1 - Math.abs(b.lum - 0.55));
+            return scoreB - scoreA;
+          });
 
-          // Secondary: pick sample with contrasting hue/lum
-          let secondarySample = samples[Math.floor(samples.length * 0.4)] || primarySample;
-          for (let i = 1; i < samples.length; i++) {
-            const s = samples[i];
-            const colorDist = Math.abs(s.r - primarySample.r) + Math.abs(s.g - primarySample.g) + Math.abs(s.b - primarySample.b);
-            if (colorDist > 80) {
-              secondarySample = s;
+          const primaryBucket = candidateColors[0];
+
+          // Pick secondary with distinct hue or luminance difference
+          let secondaryBucket = candidateColors[Math.min(1, candidateColors.length - 1)];
+          for (let i = 1; i < candidateColors.length; i++) {
+            const b = candidateColors[i];
+            const colorDist = Math.abs(b.r - primaryBucket.r) + Math.abs(b.g - primaryBucket.g) + Math.abs(b.b - primaryBucket.b);
+            if (colorDist > 75) {
+              secondaryBucket = b;
               break;
             }
           }
 
-          const primary = `rgb(${primarySample.r}, ${primarySample.g}, ${primarySample.b})`;
-          const secondary = `rgb(${secondarySample.r}, ${secondarySample.g}, ${secondarySample.b})`;
-          const highlight = '#FFFFFF';
+          const primary = `rgb(${primaryBucket.r}, ${primaryBucket.g}, ${primaryBucket.b})`;
+          const secondary = `rgb(${secondaryBucket.r}, ${secondaryBucket.g}, ${secondaryBucket.b})`;
+          const highlight = '#FAF9F6';
 
-          // Deep atmospheric tinted background based on primary hue
-          const bgR = Math.round(primarySample.r * 0.08);
-          const bgG = Math.round(primarySample.g * 0.08);
-          const bgB = Math.round(primarySample.b * 0.09);
+          // Atmospheric dark background with genuine depth (not near-black 0.08)
+          const bgR = Math.min(26, Math.max(8, Math.round(primaryBucket.r * 0.14 + 6)));
+          const bgG = Math.min(24, Math.max(7, Math.round(primaryBucket.g * 0.14 + 5)));
+          const bgB = Math.min(30, Math.max(9, Math.round(primaryBucket.b * 0.16 + 7)));
           const bg = `rgb(${bgR}, ${bgG}, ${bgB})`;
 
           const palette: PaletteColors = {
@@ -125,7 +179,7 @@ export class AmbientLight {
             secondary,
             highlight,
             bg,
-            textInactive: 'rgba(250, 249, 246, 0.28)',
+            textInactive: 'rgba(250, 249, 246, 0.32)',
             isDark: true
           };
 
