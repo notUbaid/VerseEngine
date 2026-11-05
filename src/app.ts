@@ -3,10 +3,12 @@
  *
  * Integrates:
  *   - Spicetify Player APIs & Events
- *   - Liquid WebGL Post-Processing Pipeline
+ *   - Unified Master RAF Loop (Single Clock Sample per Frame)
+ *   - Film-Grade Dynamic OKLCH Palette Crossfader
+ *   - Apple Music-Grade WebGL Texture Atmosphere
  *   - Harmonic Spring Physics Animation Core
- *   - Dynamic Ambient Palette & Rim Lighting
  *   - Multi-Tier Lyric Provider (Spotify Canvas/Synced -> LRCLIB Fallback)
+ *   - Dev Telemetry HUD (Shift + D)
  */
 
 import {
@@ -16,14 +18,13 @@ import {
   PaletteColors
 } from './types/lyrics';
 import { LyricProvider } from './lyrics/LyricProvider';
-import { AmbientLight } from './engine/AmbientLight';
+import { AmbientLight, PaletteCrossfader } from './engine/AmbientLight';
 import { AnimationEngine } from './engine/AnimationEngine';
 import { WebGLPostProcess } from './engine/WebGLPostProcess';
 import { StageView } from './ui/StageView';
 import { Clock } from './engine/Clock';
 
-// ─── Playbar Button Icon ──────────────────────────────────────────────────────
-// Minimal waveform glyph — four vertical bars of ascending height
+// Minimal waveform icon glyph — 4 ascending film tracks
 const VERSE_ICON_SVG = `
 <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
   <rect x="2"  y="6"  width="2" height="7" rx="0.5"/>
@@ -31,8 +32,6 @@ const VERSE_ICON_SVG = `
   <rect x="8"  y="2"  width="2" height="11" rx="0.5"/>
   <rect x="11" y="4.5" width="2" height="8.5" rx="0.5"/>
 </svg>`;
-
-// ─── VerseEngineApp — Singleton Orchestrator ──────────────────────────────────
 
 export class VerseEngineApp {
   private static instance: VerseEngineApp | null = null;
@@ -46,6 +45,7 @@ export class VerseEngineApp {
   private webgl: WebGLPostProcess;
   private lyricProvider: LyricProvider;
   private clock: Clock;
+  private crossfader: PaletteCrossfader | null = null;
 
   private currentTrack: ProcessedTrack | null = null;
   private currentStyle: VisualStyle = 'convex';
@@ -53,6 +53,7 @@ export class VerseEngineApp {
   private currentPalette: PaletteColors | null = null;
   private rimEnabled: boolean = true;
   private boundKeyDownListener: ((e: KeyboardEvent) => void) | null = null;
+  private boundVisibilityListener: (() => void) | null = null;
 
   private constructor() {
     this.animationEngine = new AnimationEngine();
@@ -60,6 +61,7 @@ export class VerseEngineApp {
     this.lyricProvider   = LyricProvider.getInstance();
     this.clock           = Clock.getInstance();
     this.bindKeyboardShortcuts();
+    this.bindLifecycleEvents();
     this.boot();
   }
 
@@ -73,14 +75,14 @@ export class VerseEngineApp {
   // ── Boot sequence ──────────────────────────────────────────────────────────
 
   private async boot(): Promise<void> {
-    console.log('[VerseEngine] v2.0.0 — 144Hz kinetic typography engine booting…');
+    console.log('[VerseEngine] v2.0.0 — Film-grade kinetic typography engine booting…');
     await this.waitForSpicetify();
     this.injectButtons();
     this.bindTrackChangeListener();
-    this.loadCurrentTrack(); // preload without await — stage may not be open yet
+    this.loadCurrentTrack();
 
     try {
-      (Spicetify as any).showNotification?.('VerseEngine Ready (Press Alt+L)');
+      (Spicetify as any).showNotification?.('VerseEngine Ready (Press Alt+L or Shift+D for HUD)');
     } catch {}
   }
 
@@ -96,7 +98,6 @@ export class VerseEngineApp {
         ) {
           resolve();
         } else if (attempts > 50) {
-          // Resolve after 5s fallback so nothing hangs indefinitely
           resolve();
         } else {
           setTimeout(check, 100);
@@ -133,7 +134,7 @@ export class VerseEngineApp {
         }
       }
 
-      // 2. Top Bar Button (only if Topbar API is supported in current Spicetify version)
+      // 2. Top Bar Button
       if (!this.topbarButton && (Spicetify as any).Topbar?.Button) {
         try {
           this.topbarButton = new (Spicetify as any).Topbar.Button(
@@ -157,7 +158,7 @@ export class VerseEngineApp {
     tryInject();
   }
 
-  // ── Keyboard Shortcuts ─────────────────────────────────────────────────────
+  // ── Keyboard Shortcuts & Lifecycle Events ──────────────────────────────────
 
   private bindKeyboardShortcuts(): void {
     if (this.boundKeyDownListener) {
@@ -171,11 +172,14 @@ export class VerseEngineApp {
       } else if ((e.altKey && (e.key === 'l' || e.key === 'L')) || e.key === 'F9') {
         e.preventDefault();
         this.toggleStage();
+      } else if (e.shiftKey && (e.key === 'D' || e.key === 'd')) {
+        // Toggle Dev Telemetry HUD
+        e.preventDefault();
+        this.stageView?.toggleHud();
       } else if (e.code === 'Space' && this.isOpen) {
         const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
         if (tag !== 'input' && tag !== 'textarea') {
           e.preventDefault();
-          // Passthrough spacebar to Spotify play/pause via official API
           if (typeof Spicetify !== 'undefined' && Spicetify.Player) {
             if (typeof (Spicetify.Player as any).togglePlay === 'function') {
               (Spicetify.Player as any).togglePlay();
@@ -192,6 +196,26 @@ export class VerseEngineApp {
     window.addEventListener('keydown', this.boundKeyDownListener);
   }
 
+  private bindLifecycleEvents(): void {
+    if (this.boundVisibilityListener) {
+      document.removeEventListener('visibilitychange', this.boundVisibilityListener);
+    }
+
+    this.boundVisibilityListener = () => {
+      if (document.hidden) {
+        if (this.isOpen) {
+          this.animationEngine.stop();
+        }
+      } else {
+        if (this.isOpen) {
+          this.animationEngine.start();
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', this.boundVisibilityListener);
+  }
+
   // ── Track Change ───────────────────────────────────────────────────────────
 
   private bindTrackChangeListener(): void {
@@ -206,7 +230,7 @@ export class VerseEngineApp {
     const trackItem = Spicetify.Player.data.item;
     if (!trackItem?.uri) return;
 
-    this.clock.setTrackUri(trackItem.uri);
+    await this.clock.setTrackUri(trackItem.uri);
 
     try {
       const albumArtUrl = trackItem.album?.images?.[0]?.url ?? '';
@@ -215,8 +239,20 @@ export class VerseEngineApp {
         AmbientLight.getPalette(this.currentPaletteType, albumArtUrl)
       ]);
 
-      this.currentTrack   = processedTrack;
+      this.currentTrack = processedTrack;
+
+      if (!this.crossfader) {
+        this.crossfader = new PaletteCrossfader(palette);
+      } else {
+        this.crossfader.setTarget(palette);
+      }
+
       this.currentPalette = palette;
+
+      // Load artwork texture into WebGL optical engine
+      if (this.webgl) {
+        await this.webgl.loadAlbumTexture(albumArtUrl);
+      }
 
       // If stage is already open, re-render lyrics into it immediately
       if (this.isOpen && this.stageView) {
@@ -254,6 +290,9 @@ export class VerseEngineApp {
         const albumArt = Spicetify?.Player?.data?.item?.album?.images?.[0]?.url ?? '';
         const pal = await AmbientLight.getPalette(paletteType, albumArt);
         this.currentPalette = pal;
+        if (this.crossfader) {
+          this.crossfader.setTarget(pal);
+        }
         this.stageView?.applyPalette(pal);
         this.animationEngine.setPalette(pal);
         this.webgl.setPalette(pal);
@@ -265,7 +304,6 @@ export class VerseEngineApp {
       onClose: () => this.closeStage()
     });
 
-    // Sync saved initial preferences from StageView
     this.currentStyle = this.stageView.getSavedStyle();
     this.currentPaletteType = this.stageView.getSavedPaletteType();
     this.rimEnabled = this.stageView.getSavedRimEnabled();
@@ -275,13 +313,16 @@ export class VerseEngineApp {
     // Mount WebGL post-process overlay
     this.webgl.mount(rootEl);
     this.animationEngine.bindWebgl(this.webgl);
+    this.animationEngine.bindStageView(this.stageView);
 
-    // If we don't have a track yet, fetch one
     if (!this.currentTrack) {
       await this.loadCurrentTrack();
     }
 
     if (this.currentTrack && this.currentPalette) {
+      if (this.currentTrack.albumArtUrl) {
+        await this.webgl.loadAlbumTexture(this.currentTrack.albumArtUrl);
+      }
       this.webgl.setPalette(this.currentPalette);
       this.applyTrackToStage(this.stageView, this.currentTrack, this.currentPalette);
 
@@ -290,7 +331,8 @@ export class VerseEngineApp {
         cameraEl,
         ambientRimEl,
         lyricsContainerEl,
-        this.stageView.getCachedLines()
+        this.stageView.getCachedLines(),
+        this.currentTrack
       );
       requestAnimationFrame(() => {
         this.animationEngine.measureOffsets();
@@ -299,7 +341,6 @@ export class VerseEngineApp {
       this.animationEngine.setPalette(this.currentPalette);
       this.animationEngine.setRimEnabled(this.rimEnabled);
       this.animationEngine.start();
-      this.webgl.start();
     }
   }
 
@@ -310,7 +351,6 @@ export class VerseEngineApp {
     if (this.playbarButton) this.playbarButton.active = false;
 
     this.animationEngine.stop();
-    this.webgl.stop();
     this.webgl.unmount();
 
     if (this.stageView) {
@@ -328,7 +368,6 @@ export class VerseEngineApp {
     this.animationEngine.setPalette(palette);
     this.webgl.setPalette(palette);
 
-    // Re-bind cached lines (newly rendered)
     const stageEl = document.getElementById('verse-engine-stage');
     const camEl   = document.getElementById('ve-camera');
     const rimEl   = document.getElementById('ve-ambient-rim');
@@ -340,7 +379,8 @@ export class VerseEngineApp {
         camEl,
         rimEl,
         contEl,
-        stageView.getCachedLines()
+        stageView.getCachedLines(),
+        track
       );
       requestAnimationFrame(() => {
         this.animationEngine.measureOffsets();

@@ -39,6 +39,13 @@ export interface LyricLine {
   adLibs: LyricWord[];
 }
 
+export interface SongSection {
+  name: 'intro' | 'verse' | 'chorus' | 'bridge' | 'interlude' | 'outro';
+  startMs: number;
+  endMs: number;
+  energy: number;
+}
+
 export interface ProcessedTrack {
   uri: string;
   title: string;
@@ -47,14 +54,50 @@ export interface ProcessedTrack {
   albumArtUrl: string;
   durationMs: number;
   lines: LyricLine[];
+  sections?: SongSection[];
+}
+
+export interface ColorRGB {
+  r: number; // 0..1
+  g: number; // 0..1
+  b: number; // 0..1
+}
+
+export interface ColorOKLCH {
+  l: number; // 0..1
+  c: number; // 0..0.4
+  h: number; // 0..360
 }
 
 export interface PaletteColors {
   type: PaletteType;
-  primary: string;     // 60% weight
-  secondary: string;   // 30% weight
-  highlight: string;   // 10% weight
+  primary: string;        // Hex or rgb string for CSS
+  secondary: string;
+  highlight: string;
   bg: string;
   textInactive: string;
   isDark: boolean;
+
+  // Film-grade 5-color OKLCH palette tokens
+  dominant: string;       // Atmospheric mood
+  accent: string;         // Hero kinetic moments
+  shadow: string;         // Deep backdrop shade
+  tint: string;           // Guaranteed WCAG AAA contrast against background
+  
+  // Normalized 0..1 floats for WebGL uniforms
+  rgbDominant: [number, number, number];
+  rgbAccent: [number, number, number];
+  rgbShadow: [number, number, number];
+  rgbHighlight: [number, number, number];
+  rgbBg: [number, number, number];
+}
+
+export interface AudioBeatInfo {
+  beatIndex: number;
+  timeMs: number;
+  durationMs: number;
+  isDownbeat: boolean;
+  energy: number;       // 0..1
+  loudness: number;     // dB
+  beatPulse: number;    // 0..1 decaying impulse
 }

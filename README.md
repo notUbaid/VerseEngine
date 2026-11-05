@@ -1,20 +1,28 @@
 # VERSE//ENGINE
 
-> **Next-Generation Spicetify Kinetic Typography and Optical Visualizer for Spotify Desktop**  
-> *Crafted with sub-millisecond word animation, WebGL aurora shaders, and monumental typography.*
+> **Film-Grade Kinetic Typography and Optical Atmosphere for Spotify Desktop**  
+> *Crafted with 144Hz fixed-step harmonic springs, WebGL album-art atmosphere, and monumental typography.*
 
 ---
 
-## 1. Vision and Principles
+## 1. Creative Direction: Lyrics as a Film Title Sequence
 
 Most lyric visualizers suffer from generic design tropes: blue-gradient templates, bouncing frequency bars, cluttered telemetry dashboards, and 30fps CSS opacity transitions.
 
-**VerseEngine** redefines music visualization inside Spotify Desktop via Spicetify:
+**VerseEngine** approaches lyric presentation as a live, cinematic film title sequence built on restraint, depth, consistent timing, and monumental typography:
 
-1. **Zero Dashboard Chrome**: No cards, boxes, 1px solid borders, sidebars, progress bars, or status tickers. When the mouse is idle for 2 seconds, 100% of the screen is pure background, ambient rim light bleed, and monumental typography.
-2. **Zero React in the Animation Loop**: React is completely eliminated from the runtime architecture. All 144Hz per-frame updates run in a pure vanilla TypeScript `AnimationEngine` directly mutating pre-cached DOM nodes and WebGL uniforms via `requestAnimationFrame`.
-3. **Continuous Physical Harmonic Springs**: Word kinematics and camera coordinates are solved using a damped harmonic spring solver (`HarmonicSpring` with semi-implicit Euler integration) controlling Y-offset, depth, scale, sub-pixel gradient sweeps, and optical blooms.
-4. **No Emojis**: Emotional resonance is expressed exclusively through typographic physics, optical shaders, and palette geometry.
+1. **Exactly Three Layers**:
+   - **Atmosphere**: WebGL album-art optical textures, slow noise drift, 35mm grain, and peripheral bezel ambient rim.
+   - **Text (The Hero)**: Large, expressive variable grotesque typography (`clamp(3.8rem, 6.4vw, 7.2rem)`), line-height $1.08$, letter-spacing $-0.03\text{em}$, `text-wrap: balance`.
+   - **Accents**: Rare specular flares, chromatic shockwaves on chorus slams, and subtle particle bursts (at most one every ~8s).
+2. **Four Tempos of Motion**:
+   - **Ambient (10–30s loops)**: Slow rotating background textures, atmospheric noise drift, floating dust particles.
+   - **Line (450–700ms)**: Anticipatory line rise ($180\text{ms}$ before vocal onset) with $25\text{ms}$ word stagger.
+   - **Word (120–300ms)**: Soft-edge liquid gradient wipe (`--p`), active scale lift ($1.04\times$), and $3\text{px}$ elevation.
+   - **Accent (400–900ms)**: Chorus slam push, chromatic split spikes, particle burst scatter.
+3. **One Hero Look**: **Convex** (Optical Dome) is the refined default, with **Drift**, **Editorial**, and **Semantic** serving as alternate grades on the same motion core.
+4. **Global Dynamic Energy ($E \in [0, 1]$)**: Calm verses sit around $0.20$ and choruses surge to $0.85$. Background speed, glow, particle scatter, camera breathing, and accent frequency dynamically scale with energy.
+5. **No Emojis**: Emotional resonance is expressed exclusively through typographic physics, optical shaders, and palette geometry.
 
 ---
 
@@ -25,85 +33,110 @@ verse-engine/
 ├── package.json                   # Zero-dependency runtime, typecheck, build, test scripts
 ├── tsconfig.json                  # Strict TypeScript configuration
 ├── build.mjs                      # Cross-platform esbuild bundler -> single self-contained IIFE bundle
-├── ARCHITECTURE.md                # In-depth architectural specification and math
+├── ARCHITECTURE.md                # System design & mathematical specifications
+├── GATES.md                       # Formal verification acceptance gates
 ├── LICENSE                        # MIT License
 ├── test/
-│   ├── unit-tests.ts              # 49 deterministic unit tests (Springs, Lexicon, Synthesizer, International scripts)
+│   ├── unit-tests.ts              # 64 deterministic unit tests (Springs, OKLCH, Parsers, Clock, Accumulator)
 │   └── run-tests.mjs              # Test runner
 ├── dist/
-│   └── verse-engine.js            # Compiled production bundle (~98 KB self-contained IIFE)
+│   └── verse-engine.js            # Compiled production bundle (~112 KB self-contained IIFE)
 └── src/
-    ├── app.ts                     # Spicetify button injection, keyboard shortcuts, and orchestrator
+    ├── app.ts                     # Spicetify orchestrator, keyboard hooks, lifecycle listeners
     ├── types/
-    │   ├── lyrics.ts              # AST: LyricChar, LyricWord, LyricLine, ProcessedTrack
-    │   └── spicetify.d.ts         # Type definitions for Spicetify APIs
+    │   ├── lyrics.ts              # AST: LyricChar, LyricWord, LyricLine, ProcessedTrack, ColorOKLCH
+    │   └── spicetify.d.ts         # Type definitions for Spicetify and AudioAnalysis APIs
     ├── engine/
-    │   ├── Clock.ts               # 144Hz drift-corrected interpolated playback clock
-    │   ├── SpringSolver.ts        # HarmonicSpring & SpringVector2 (semi-implicit Euler)
-    │   ├── SemanticPhysics.ts     # Curated lexicon for concrete semantic physics
-    │   ├── AmbientLight.ts        # 16-bucket RGB quantization palette extractor with contrast limits
-    │   ├── WebGLPostProcess.ts    # GPU Ethereal Liquid Aurora Background shader with monotonic phase
-    │   └── AnimationEngine.ts     # Pure vanilla 144Hz RAF loop with dirty checking & DOM caching
+    │   ├── Clock.ts               # Slew clock with lookahead (+150ms anticipation) and beat tracker
+    │   ├── SpringSolver.ts        # 4 motion tokens, 3 easing curves, fixed 1/240s accumulator
+    │   ├── SemanticPhysics.ts     # Curated lexicon for concrete physical responses
+    │   ├── AmbientLight.ts        # 5-color OKLCH palette extractor with 1.2s smooth crossfade
+    │   ├── WebGLPostProcess.ts    # 3-scale album-art texture background, bokeh, 24fps grain, flares
+    │   └── AnimationEngine.ts     # Unified master RAF loop, compositor-only styles, layer governor
     ├── lyrics/
     │   └── LyricProvider.ts       # Multi-source waterfall + Phonetic Synthesizer + Intl.Segmenter
     └── ui/
-        └── StageView.ts           # Chromeless DOM builder, Lumn bezel rim, auto-hiding glass pill
+        └── StageView.ts           # 3-layer DOM builder, hero typography, Dev HUD, icon dock
 ```
 
 ---
 
-## 3. Core Architectural Features
+## 3. Visual & Optical System
 
-### Ethereal Liquid Aurora Mesh Shader (`src/engine/WebGLPostProcess.ts`)
-- **Apple Music-grade optical background:** 4 large, soft Gaussian color orbs orbiting on smooth Lissajous curves that dynamically blend 4 extracted album palette colors.
-- **Monotonic CPU phase accumulation:** Phase accumulates continuously via `dt * speed`, completely eliminating stutter or teleportation when vocal intensity changes.
-- **Velvety OLED contrast:** Dark, rich baseline canvas ensuring white text (`#FAF9F6`) maintains high contrast across the screen.
-- **Theme intelligence:** Light themes (`editorial`) automatically bypass the dark WebGL shader to present an authentic bone-white paper finish.
-- **Native-resolution dither:** Micro-dither prevents 8-bit color banding without blocky upscaled pixelation.
+### Apple-Music-Grade Background Atmosphere (`src/engine/WebGLPostProcess.ts`)
+- **3-Scale Artwork Texture**: Album art is mapped to a WebGL texture and sampled at 3 distinct scales ($1.0\times, 1.8\times, 2.6\times$) with independent slow noise rotation and translation.
+- **1.4x Saturation Boost & Vignette**: Enriches muted album art while blending with dark shadow base to guarantee text contrast.
+- **250 Bokeh & Dust Particles**: Distributed across 3 depth planes ($Z = 0.2, 0.6, 1.0$), drifting with ambient updrafts and scattering on peak beat energy.
+- **Film Cues**:
+  - Full-resolution 24fps film grain dither (`floor(u_time * 24.0)`).
+  - Edge-only chromatic aberration that spikes on chorus impacts.
+  - Anamorphic horizontal specular flare traveling across the active word.
+  - Subtle lens breathing ($1.00$ to $1.015$) on bar downbeats.
 
-### Single-Span Word Architecture and Liquid Gradient Sweep (`src/ui/StageView.ts`)
-- Words render as single `.ve-word` elements with a soft-edge liquid gradient sweep (`var(--word-p)`).
-- Full retention of font ligatures, kerning, and sub-pixel glyph alignment across Latin, Indic (Devanagari), and CJK scripts.
-- Zero CSS transitions on JS-driven properties (`transform`, `filter`, `opacity`) to eliminate frame-rate fighting and mushy motion.
+### 5-Color OKLCH Palette & Smooth Crossfading (`src/engine/AmbientLight.ts`)
+- Builds a 5-color perceptual palette from artwork: `dominant`, `accent`, `shadow`, `highlight`, and `tint`.
+- Lightness is capped and chroma is boosted ($C \ge 0.12$).
+- Contrast is verified against background luminance ($> 8:1$ WCAG AAA contrast).
+- `PaletteCrossfader` smoothly interpolates colors over $1.2\text{s}$ on track changes with zero hard visual pops.
 
-### High-Precision Interpolated Clock (`src/engine/Clock.ts`)
-- Solves Spotify's coarse 250ms–500ms polling jitter by extrapolating playback monotonically at 144Hz using `performance.now()`.
-- Incorporates automatic hard-snapping on seeks ($\ge 60\text{ms}$) and exponential drift smoothing during normal playback.
-
-### Multi-Source Waterfall and International Parsing (`src/lyrics/LyricProvider.ts`)
-- **Waterfall:** Spotify Color-Lyrics -> LRCLIB API (`/api/get` and `/api/search`) -> Procedural Fallback.
-- **URI Resolution:** Transparently transforms internal `spotify:image:<hash>` URIs to public HTTPS CDNs for reliable browser canvas decoding.
-- **International Script Support:** Powered by `Intl.Segmenter` and Unicode `\p{L}\p{M}\p{N}` matching. Correctly preserves Devanagari conjuncts (e.g., `प्यार`) and segments unspaced CJK phrases without breaking graphemes.
-- **Standard LRC Enhancements:** Full support for multi-timestamp lines (e.g. `[00:10.00][00:25.00]`) and fraction-less timestamps (`[01:15]`).
-- **Enhanced LRC Durations:** Measures accurate word durations (`next.startMs - cur.startMs`).
+### Hero Typography & Single-Span Word Reveal (`src/ui/StageView.ts`)
+- **Hero Scale**: `clamp(3.8rem, 6.4vw, 7.2rem)` with tight `line-height: 1.08` and `letter-spacing: -0.03em`.
+- **Word Reveal Wipe**:
+  ```css
+  .ve-word.is-active {
+    background: linear-gradient(90deg, #FAF9F6 calc(var(--p) - 14%), rgba(250, 249, 246, 0.28) var(--p));
+    -webkit-background-clip: text;
+    color: transparent;
+  }
+  ```
+  `--p = (t * 114) + '%'` where $t \in [0, 1]$.
+- Settled words receive static class `.ve-word-past` and upcoming words receive `.ve-word-future`, eliminating redundant per-frame style writes.
+- One duplicate glow element per line (`.ve-line-glow`), avoiding hundreds of per-character filters.
 
 ---
 
-## 4. The 4 Visual Styles
+## 4. Smoothness Engineering
 
-| Style | Inspiration | Visual Choreography |
+- **Unified Master Loop**: Merged DOM and WebGL into a single `requestAnimationFrame` loop that reads one clock sample per frame.
+- **Fixed-Step Physics Step (1/240s)**: Spring simulation uses a fixed-step accumulator at $4.166\text{ms}$, ensuring kinematics never depend on monitor refresh rates ($60\text{Hz}, 120\text{Hz}, 144\text{Hz}, 240\text{Hz}$).
+- **Compositor-Only Mutations**: Only `transform` and `opacity` are updated every frame.
+- **Layer Budgeting ($\le 20$ Layers)**: `will-change: transform, opacity` is promoted strictly on the active line and its $\pm 1$ immediate neighbors. Farther lines use `content-visibility: auto` and `contain: layout paint`.
+- **Slew Clock**: Render time advances at real time and bleeds off error against audio time (`slewRate = Math.min(1, dt * 8)`). Snaps strictly on genuine seeks ($> 150\text{ms}$). Includes $+150\text{ms}$ anticipation lookahead.
+- **Depth-of-Field Isolation**: Blur is restricted strictly to immediate $\pm 1$ neighbors. Farther lines use scale and opacity only.
+- **Quality Governor**: Monitors rolling frame times and p95/1%-low metrics. Automatically steps down particle count and render resolution if frame budgets are exceeded.
+- **Dev Telemetry HUD**: Toggleable via `Shift + D`. Displays live FPS, 1%-low, frame duration (ms), dynamic energy $E$, beat pulse, and active layer count.
+
+---
+
+## 5. Film Moments
+
+| Moment | Trigger | Visual Choreography |
 | :--- | :--- | :--- |
-| **Convex** | Verci *Fisheye* | **Continuous floating-point optical dome.** Active word sits closest to the glass ($Z = +60\text{px}$, scale $1.32\times$), while surrounding words curve backward along a smooth Gaussian lens. Inline `perspective(900px)` inside word transforms prevents Chromium 3D flattening bugs. |
-| **Drift** | Verci *Ship* | **Monumental un-wrapped horizontal marquee ribbon.** Lines never wrap; rendered in display typography (`Syne 800`). A virtual 144Hz camera glides horizontally, locking the sung word to the focal third while inactive lines stack with 3D perspective without snapping. |
-| **Editorial** | Swiss Print Press | **Haute-couture typographic contrast.** Geometric sans paired with Italian serif italics (*Instrument Serif*) for key words and ad-libs on a bone-white `#FAF9F6` paper background. Active lines feature an animated baseline progress rule. Melisma notes smoothly stretch via GPU `scaleX()` without triggering DOM layout reflows. |
-| **Semantic** | Concrete Typo-Physics | **Living word physics (Zero Emojis).** Gravity words physically plunge with a damped bounce; pulse words emit chromatic bloom; fracture words shear along diagonal clip-paths; echo words emit twin expanding wireframe ghost outlines. |
+| **Title-Card Intro** | Track start | Fullscreen title card reveals artwork with song and artist, then dissolves into the first lyric line. |
+| **Chorus Slam** | Energy spike ($E \ge 0.78$) or section climax | Camera pushes forward, shockwave ripples, chromatic aberration spikes, and bokeh particles burst outward. |
+| **Held Notes (Melisma)** | Vocal syllable held $\ge 600\text{ms}$ | Word expands horizontally via GPU `scaleX()` with reserved width to prevent layout reflows. |
+| **Specular Sweep** | Active vocal line | Narrow horizontal anamorphic flare tracks across the active word. |
+| **Instrumental Interlude** | Gaps $> 4000\text{ms}$ between lines | Typography gently yields to breathing `• • •` dots and slow artwork zoom. |
+| **Outro** | Song concludes | Lyrics dissolve upward, title card returns, and background dims. |
+| **No Lyrics / Instrumental** | Track without lyrics | Cinematic film card with rotating artwork atmosphere and breathing ambient rim. |
 
 ---
 
-## 5. Controls and Keybindings
+## 6. Controls and Keybindings
 
 | Key / Control | Action |
 | :--- | :--- |
-| **Playbar Button** | Native waveform icon in Spotify's bottom player bar |
+| **Playbar Button** | Waveform icon in Spotify's bottom player bar |
 | **`Alt + L`** or **`F9`** | Toggle Fullscreen Lyrics Stage |
+| **`Shift + D`** | Toggle Real-Time Dev Telemetry HUD (FPS, 1% Low, Frame ms, Energy, Layers) |
 | **`Escape`** | Exit fullscreen with smooth fade |
-| **`Space`** | Play / Pause playback |
-| **Mouse Idle (2s)** | Cursor and control pill auto-hide completely for 100% pure typography |
-| **Control Pill** | Bottom floating glass dock: switch styles, switch palettes (Album Sync, Maroon & Bone, Obsidian), toggle bezel rim, and fine-tune sync offset ($\pm 50\text{ms}$). |
+| **`Space`** | Passthrough Play / Pause playback |
+| **Mouse Idle (2s)** | Cursor and control dock auto-hide for pure chromeless typography |
+| **Control Dock** | Bottom floating glass dock: switch styles, switch palettes, toggle rim, and tune latency ($\pm 50\text{ms}$). |
 
 ---
 
-## 6. Installation and Development
+## 7. Installation and Development
 
 ### Prerequisites
 - Spotify Desktop (Windows, macOS, or Linux)
@@ -119,13 +152,13 @@ cd VerseEngine
 # Install build dependencies
 npm install
 
-# Run 49 deterministic unit tests
+# Run 64 deterministic unit tests
 npm test
 
 # Verify TypeScript types
 npm run typecheck
 
-# Bundle extension
+# Bundle extension & auto-deploy to Spicetify extensions directory
 npm run build
 ```
 
@@ -140,6 +173,6 @@ spicetify apply
 
 ---
 
-## 7. License
+## 8. License
 
 MIT License. See [LICENSE](LICENSE) for details.

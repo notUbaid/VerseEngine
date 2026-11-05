@@ -15,6 +15,7 @@ export interface StageCallbacks {
   onPaletteChange: (paletteType: PaletteType) => void;
   onRimToggle: (enabled: boolean) => void;
   onClose: () => void;
+  onToggleHud?: () => void;
 }
 
 export class StageView {
@@ -23,6 +24,9 @@ export class StageView {
   private cameraEl: HTMLElement | null = null;
   private lyricsContainerEl: HTMLElement | null = null;
   private controlPillEl: HTMLElement | null = null;
+  private titleCardEl: HTMLElement | null = null;
+  private interludeEl: HTMLElement | null = null;
+  private devHudEl: HTMLElement | null = null;
 
   private hideTimeout: number | null = null;
   private clock: Clock = Clock.getInstance();
@@ -31,13 +35,14 @@ export class StageView {
   private currentStyle: VisualStyle = 'convex';
   private currentPaletteType: PaletteType = 'album';
   private rimEnabled: boolean = true;
+  private isHudVisible: boolean = false;
   private syncOffsetDisplayEl: HTMLElement | null = null;
   private cachedLines: CachedLineRef[] = [];
 
   constructor(callbacks: StageCallbacks) {
     this.callbacks = callbacks;
     this.loadSavedPreferences();
-    this.injectGoogleFonts();
+    this.injectFontCascades();
   }
 
   private loadSavedPreferences(): void {
@@ -69,14 +74,14 @@ export class StageView {
     return this.rimEnabled;
   }
 
-  private injectGoogleFonts(): void {
+  private injectFontCascades(): void {
     const id = 'verse-engine-fonts';
     if (!document.getElementById(id)) {
       const link = document.createElement('link');
       link.id = id;
       link.rel = 'stylesheet';
       link.href =
-        'https://fonts.googleapis.com/css2?family=Instrument+Serif:ital,wght@0,400;1,400&family=Plus+Jakarta+Sans:wght@600;700;800&family=Syne:wght@700;800&display=swap';
+        'https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Instrument+Serif:ital@0;1&family=Plus+Jakarta+Sans:wght@600;700;800&family=Syne:wght@700;800&display=swap';
       document.head.appendChild(link);
     }
   }
@@ -86,6 +91,9 @@ export class StageView {
     cameraEl: HTMLElement;
     ambientRimEl: HTMLElement;
     lyricsContainerEl: HTMLElement;
+    titleCardEl: HTMLElement;
+    interludeEl: HTMLElement;
+    devHudEl: HTMLElement;
   } {
     let root = document.getElementById('verse-engine-stage');
     if (!root) {
@@ -105,19 +113,21 @@ export class StageView {
           height: 100vh;
           overflow: hidden;
           background-color: var(--ve-bg, #0A0808);
-          font-family: 'Plus Jakarta Sans', 'SpotifyMixUI', 'CircularSp', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+          font-family: 'Bricolage Grotesque', 'Plus Jakarta Sans', 'Inter Tight', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+          font-feature-settings: "kern" 1, "liga" 1;
+          -webkit-font-smoothing: antialiased;
+          -moz-osx-font-smoothing: grayscale;
           user-select: none;
           transition: background-color 0.4s ease;
           animation: veStageFadeIn 0.3s ease-out forwards;
         }
 
-        /* Clean opacity fade: ZERO permanent blur or transform filters on the root stage */
         @keyframes veStageFadeIn {
           0%   { opacity: 0; }
           100% { opacity: 1; }
         }
 
-        /* Lumn-style 4-edge Ambient Bezel Rim Lighting */
+        /* ── LAYER 1: ATMOSPHERE (Lumn-Style 4-Edge Peripheral Rim Glow) ── */
         #ve-ambient-rim {
           position: absolute;
           inset: 0;
@@ -132,14 +142,14 @@ export class StageView {
           transition: opacity 0.3s ease;
         }
 
-        /* Cinematic Atmospheric Viewport Mask: lyrics dissolve into mist at top/bottom */
+        /* ── LAYER 2: TEXT (The Hero Viewport & Atmosphere Mask) ── */
         .ve-perspective-stage {
           position: absolute;
           inset: 0;
           overflow: hidden;
           pointer-events: auto;
-          -webkit-mask-image: linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.6) 12%, black 22%, black 78%, rgba(0,0,0,0.6) 88%, transparent 100%);
-          mask-image: linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.6) 12%, black 22%, black 78%, rgba(0,0,0,0.6) 88%, transparent 100%);
+          -webkit-mask-image: linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.6) 10%, black 20%, black 80%, rgba(0,0,0,0.6) 90%, transparent 100%);
+          mask-image: linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.6) 10%, black 20%, black 80%, rgba(0,0,0,0.6) 90%, transparent 100%);
           z-index: 10;
         }
 
@@ -151,70 +161,106 @@ export class StageView {
           pointer-events: none;
         }
 
-        /* Vertical scrolling kinetic lyrics container (only element with will-change) */
         .ve-lyrics-container {
           position: absolute;
           top: 0;
-          left: 8vw;
-          width: 84vw;
-          max-width: 1400px;
+          left: 10vw;
+          width: 80vw;
+          max-width: 1440px;
           box-sizing: border-box;
-          padding-top: 15vh;
+          padding-top: 20vh;
           padding-bottom: 55vh;
           pointer-events: auto;
-          will-change: transform;
         }
 
-        /* Line structure: ZERO CSS transitions so JS RAF loop never fights CSS */
+        /* Line structure: compositor-only transforms, strictly contained */
         .ve-line {
           position: relative;
           display: flex;
           flex-wrap: wrap;
           align-items: baseline;
           justify-content: flex-start;
-          row-gap: 0.35em;
-          line-height: 1.36;
-          margin: 1.8rem 0;
+          row-gap: 0.25em;
+          line-height: 1.08;
+          margin: 3.2rem 0;
           cursor: pointer;
+          contain: layout paint;
+          text-wrap: balance;
+          transform-origin: center center;
         }
 
         .ve-line:hover {
-          opacity: 0.90 !important;
+          opacity: 0.95 !important;
         }
 
-        /* Words: Single-element soft liquid karaoke sweep with full kerning & ligatures */
+        /* Single blurred glow layer behind the active line */
+        .ve-line-glow {
+          position: absolute;
+          inset: -12px -20px;
+          border-radius: 24px;
+          background: radial-gradient(ellipse at center, var(--ve-primary) 0%, transparent 75%);
+          opacity: 0;
+          filter: blur(28px);
+          pointer-events: none;
+          z-index: -1;
+          transition: opacity 0.3s ease;
+        }
+
+        .ve-line.is-active .ve-line-glow {
+          opacity: 0.28;
+        }
+
+        /* ── HERO WORD TYPOGRAPHY ── */
         .ve-word {
           position: relative;
           display: inline-flex;
           align-items: baseline;
           white-space: nowrap;
           margin-right: 0.32em !important;
-          font-size: clamp(2.3rem, 3.8vw, 4.2rem);
+          font-size: clamp(3.6rem, 6.2vw, 6.8rem);
           font-weight: 700;
-          letter-spacing: -0.015em;
+          letter-spacing: -0.03em;
           transform-origin: center baseline;
+          color: var(--ve-text-inactive, rgba(250, 249, 246, 0.28));
+          transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        /* Active word soft-edge wipe */
+        .ve-word.is-active {
           background: linear-gradient(
             90deg,
-            var(--ve-highlight, #FAF9F6) 0%,
-            var(--ve-highlight, #FAF9F6) var(--word-p, 0%),
-            var(--ve-text-inactive, rgba(250, 249, 246, 0.28)) calc(var(--word-p, 0%) + 14%),
-            var(--ve-text-inactive, rgba(250, 249, 246, 0.28)) 100%
+            var(--ve-highlight, #FAF9F6) calc(var(--p, 0%) - 14%),
+            var(--ve-text-inactive, rgba(250, 249, 246, 0.28)) var(--p, 0%)
           );
           background-clip: text;
           -webkit-background-clip: text;
           color: transparent;
+          transform: translateY(-3px) scale(1.04);
         }
 
-        /* ── 1. CONVEX / FISHEYE MODE ── */
+        /* Past settled words: static class with zero continuous gradient write */
+        .ve-word.ve-word-past {
+          color: var(--ve-highlight, #FAF9F6) !important;
+          background: none !important;
+          -webkit-background-clip: initial !important;
+          opacity: 0.95;
+          transform: translateY(0) scale(1.0);
+        }
+
+        /* Future words: static class */
+        .ve-word.ve-word-future {
+          color: var(--ve-text-inactive, rgba(250, 249, 246, 0.28)) !important;
+          background: none !important;
+          -webkit-background-clip: initial !important;
+          transform: translateY(0) scale(1.0);
+        }
+
+        /* ── 1. CONVEX / OPTICAL DOME MODE (The Refined Hero Default) ── */
         .ve-style-convex .ve-line {
-          margin: 2.2rem 0 !important;
-        }
-        .ve-style-convex .ve-word {
-          font-size: clamp(2.4rem, 4.0vw, 4.4rem);
-          font-weight: 700;
+          margin: 3.4rem 0 !important;
         }
 
-        /* ── 2. DRIFT / SHIP MARQUEE MODE (Continuous un-wrapped kinetic ribbon) ── */
+        /* ── 2. DRIFT MARQUEE MODE (Unwrapped Horizontal Ribbon) ── */
         .ve-style-drift {
           width: max-content !important;
           max-width: none !important;
@@ -225,31 +271,29 @@ export class StageView {
           flex-wrap: nowrap !important;
           white-space: nowrap !important;
           width: max-content !important;
-          margin: 2.8rem 0 !important;
+          margin: 3.6rem 0 !important;
           padding-left: 36vw !important;
         }
         .ve-style-drift .ve-word {
-          font-family: 'Syne', 'Plus Jakarta Sans', sans-serif !important;
-          font-size: clamp(3.0rem, 5.2vw, 5.4rem) !important;
+          font-family: 'Syne', sans-serif !important;
+          font-size: clamp(4.0rem, 7.2vw, 7.8rem) !important;
           font-weight: 800 !important;
           text-transform: uppercase !important;
-          letter-spacing: -0.01em !important;
-          margin-right: 0.35em !important;
+          letter-spacing: -0.02em !important;
         }
 
-        /* ── 3. EDITORIAL MODE (Swiss Haute-Couture Typographic Press) ── */
+        /* ── 3. EDITORIAL MODE (Swiss Print Press) ── */
         .ve-style-editorial {
-          left: 10vw !important;
+          left: 12vw !important;
           max-width: 1200px !important;
         }
         .ve-style-editorial .ve-line {
-          margin: 2.4rem 0 !important;
-          position: relative;
+          margin: 3.2rem 0 !important;
         }
-        .ve-style-editorial .ve-line-active::after {
+        .ve-style-editorial .ve-line.is-active::after {
           content: '';
           position: absolute;
-          bottom: -10px;
+          bottom: -12px;
           left: 0;
           width: var(--line-progress, 0%);
           height: 2px;
@@ -257,29 +301,16 @@ export class StageView {
           opacity: 0.85;
           box-shadow: 0 0 10px var(--ve-primary);
         }
-        .ve-style-editorial .ve-word {
-          font-size: clamp(2.4rem, 4.2vw, 4.5rem);
-          font-weight: 700;
-        }
         .ve-style-editorial .ve-word-key,
         .ve-word-adlib {
           font-family: 'Instrument Serif', Georgia, serif !important;
           font-style: italic !important;
-          font-size: 1.25em !important;
+          font-size: 1.18em !important;
           font-weight: 400 !important;
-          letter-spacing: 0.02em !important;
+          letter-spacing: 0.01em !important;
         }
 
-        /* ── 4. SEMANTIC LIVING PHYSICS MODE ── */
-        .ve-style-semantic .ve-line {
-          margin: 2.0rem 0;
-        }
-        .ve-style-semantic .ve-word {
-          font-size: clamp(2.4rem, 4.0vw, 4.4rem);
-          font-weight: 700;
-        }
-
-        /* FRACTURE twin clip-path layers */
+        /* ── 4. SEMANTIC LIVING PHYSICS ── */
         .ve-fracture-top {
           clip-path: polygon(0 0, 100% 0, 100% 48%, 0 55%);
           position: relative;
@@ -292,8 +323,6 @@ export class StageView {
           left: 0;
           display: inline-block;
         }
-
-        /* ECHO ghost clones */
         .ve-echo-clone-1,
         .ve-echo-clone-2 {
           position: absolute;
@@ -306,8 +335,107 @@ export class StageView {
           opacity: 0;
         }
 
-        /* Liquid Glass Auto-Hiding Control Pill */
-        .ve-control-pill {
+        /* ── FILM TITLE CARD INTRO & OUTRO ── */
+        #ve-title-card {
+          position: absolute;
+          inset: 0;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          z-index: 20;
+          pointer-events: none;
+          opacity: 0;
+          transition: opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        #ve-title-card.is-visible {
+          opacity: 1;
+        }
+        .ve-title-art {
+          width: 140px;
+          height: 140px;
+          border-radius: 16px;
+          box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6), 0 0 40px var(--ve-primary);
+          margin-bottom: 2rem;
+          object-fit: cover;
+        }
+        .ve-title-heading {
+          font-size: clamp(2.8rem, 5.0vw, 5.2rem);
+          font-weight: 800;
+          letter-spacing: -0.035em;
+          color: var(--ve-highlight, #FAF9F6);
+          text-align: center;
+          line-height: 1.1;
+          margin: 0;
+        }
+        .ve-title-artist {
+          font-family: 'Instrument Serif', Georgia, serif;
+          font-style: italic;
+          font-size: clamp(1.8rem, 2.8vw, 3.0rem);
+          color: var(--ve-accent, #E03E52);
+          margin-top: 0.6rem;
+          opacity: 0.90;
+        }
+
+        /* ── INSTRUMENTAL INTERLUDE (Breathing Dots) ── */
+        #ve-interlude {
+          position: absolute;
+          inset: 0;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          z-index: 15;
+          pointer-events: none;
+          opacity: 0;
+          transition: opacity 0.6s ease;
+        }
+        #ve-interlude.is-visible {
+          opacity: 1;
+        }
+        .ve-interlude-dots {
+          display: flex;
+          gap: 16px;
+        }
+        .ve-interlude-dot {
+          width: 10px;
+          height: 10px;
+          border-radius: 50%;
+          background: var(--ve-highlight, #FAF9F6);
+          opacity: 0.4;
+          animation: veDotPulse 1.8s infinite ease-in-out;
+        }
+        .ve-interlude-dot:nth-child(2) { animation-delay: 0.3s; }
+        .ve-interlude-dot:nth-child(3) { animation-delay: 0.6s; }
+
+        @keyframes veDotPulse {
+          0%, 100% { opacity: 0.25; transform: scale(0.9); }
+          50%      { opacity: 0.95; transform: scale(1.3); box-shadow: 0 0 16px var(--ve-primary); }
+        }
+
+        /* ── DEV TELEMETRY HUD (Shift + D) ── */
+        #ve-dev-hud {
+          position: fixed;
+          top: 24px;
+          right: 28px;
+          z-index: 100001;
+          background: rgba(14, 12, 16, 0.85);
+          backdrop-filter: blur(20px);
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          border-radius: 12px;
+          padding: 10px 14px;
+          font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+          font-size: 11px;
+          color: #FAF9F6;
+          display: none;
+          pointer-events: none;
+        }
+        #ve-dev-hud.is-visible {
+          display: block;
+        }
+
+        /* ── LIQUID GLASS CONTROL ICON DOCK ── */
+        .ve-control-dock {
           position: fixed;
           bottom: 24px;
           left: 50%;
@@ -315,47 +443,47 @@ export class StageView {
           z-index: 100000;
           display: flex;
           align-items: center;
-          gap: 8px;
-          padding: 6px 14px;
+          gap: 6px;
+          padding: 6px 10px;
           border-radius: 9999px;
           backdrop-filter: blur(24px) saturate(180%);
           -webkit-backdrop-filter: blur(24px) saturate(180%);
-          background: rgba(14, 12, 16, 0.72);
+          background: rgba(14, 12, 16, 0.76);
           border: 1px solid rgba(255, 255, 255, 0.12);
-          box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5), 0 0 1px rgba(255, 255, 255, 0.15);
+          box-shadow: 0 12px 36px rgba(0, 0, 0, 0.55), 0 0 1px rgba(255, 255, 255, 0.20);
           color: #FAF9F6;
-          font-size: 11px;
-          font-weight: 500;
           transition: opacity 0.3s ease, transform 0.3s ease;
           pointer-events: auto;
         }
 
-        .ve-pill-btn {
+        .ve-dock-btn {
           background: transparent;
           border: none;
-          color: rgba(250, 249, 246, 0.55);
-          padding: 4px 8px;
+          color: rgba(250, 249, 246, 0.60);
+          padding: 6px 10px;
           border-radius: 9999px;
-          font-size: 10.5px;
+          font-size: 11px;
           font-weight: 600;
           letter-spacing: 0.02em;
           cursor: pointer;
           transition: all 0.15s ease;
+          display: flex;
+          align-items: center;
+          gap: 5px;
         }
-
-        .ve-pill-btn:hover {
+        .ve-dock-btn:hover {
           color: #FAF9F6;
-        }
-
-        .ve-pill-btn.active {
-          color: var(--ve-primary, #E03E52);
           background: rgba(255, 255, 255, 0.08);
         }
-
-        .ve-pill-divider {
+        .ve-dock-btn.active {
+          color: var(--ve-primary, #E03E52);
+          background: rgba(255, 255, 255, 0.12);
+        }
+        .ve-dock-divider {
           width: 1px;
-          height: 14px;
+          height: 16px;
           background: rgba(255, 255, 255, 0.14);
+          margin: 0 2px;
         }
       </style>
 
@@ -367,15 +495,38 @@ export class StageView {
         </div>
       </div>
 
-      <div class="ve-control-pill" id="ve-control-pill"></div>
+      <div id="ve-title-card">
+        <img class="ve-title-art" id="ve-title-art" src="" alt="Album Art" />
+        <h1 class="ve-title-heading" id="ve-title-heading">Song Title</h1>
+        <div class="ve-title-artist" id="ve-title-artist">Artist</div>
+      </div>
+
+      <div id="ve-interlude">
+        <div class="ve-interlude-dots">
+          <div class="ve-interlude-dot"></div>
+          <div class="ve-interlude-dot"></div>
+          <div class="ve-interlude-dot"></div>
+        </div>
+      </div>
+
+      <div id="ve-dev-hud">
+        <div>FPS: <span id="hud-fps">0</span> | 1% Low: <span id="hud-low">0</span></div>
+        <div>Frame: <span id="hud-frame">0.0</span>ms | Energy: <span id="hud-energy">0.0</span></div>
+        <div>Beat: <span id="hud-beat">0.0</span> | Layers: <span id="hud-layers">0</span></div>
+      </div>
+
+      <div class="ve-control-dock" id="ve-control-dock"></div>
     `;
 
     this.rimPrimaryEl = document.getElementById('ve-ambient-rim');
     this.cameraEl = document.getElementById('ve-camera');
     this.lyricsContainerEl = document.getElementById('ve-lyrics-container');
-    this.controlPillEl = document.getElementById('ve-control-pill');
+    this.titleCardEl = document.getElementById('ve-title-card');
+    this.interludeEl = document.getElementById('ve-interlude');
+    this.devHudEl = document.getElementById('ve-dev-hud');
+    this.controlPillEl = document.getElementById('ve-control-dock');
 
-    this.renderControlPill();
+    this.renderControlDock();
     this.bindActivityListeners();
     this.applyStyleClass(this.currentStyle);
 
@@ -383,7 +534,10 @@ export class StageView {
       rootEl: this.rootEl,
       cameraEl: this.cameraEl!,
       ambientRimEl: this.rimPrimaryEl!,
-      lyricsContainerEl: this.lyricsContainerEl!
+      lyricsContainerEl: this.lyricsContainerEl!,
+      titleCardEl: this.titleCardEl!,
+      interludeEl: this.interludeEl!,
+      devHudEl: this.devHudEl!
     };
   }
 
@@ -397,6 +551,7 @@ export class StageView {
     this.rootEl.style.setProperty('--ve-bg', palette.bg);
     this.rootEl.style.setProperty('--ve-primary', palette.primary);
     this.rootEl.style.setProperty('--ve-secondary', palette.secondary);
+    this.rootEl.style.setProperty('--ve-accent', palette.accent);
     this.rootEl.style.setProperty('--ve-highlight', palette.highlight);
     this.rootEl.style.setProperty('--ve-text-inactive', palette.textInactive);
 
@@ -424,8 +579,9 @@ export class StageView {
   }
 
   /**
-   * Builds the DOM tree ONCE for the song.
+   * Builds the DOM tree once for the song.
    * Words are single spans with soft liquid gradient wipes.
+   * One duplicate glow element per line.
    */
   public renderLyrics(track: ProcessedTrack): CachedLineRef[] {
     if (!this.lyricsContainerEl) return [];
@@ -444,6 +600,12 @@ export class StageView {
         }
       });
 
+      // Duplicate blurred glow layer behind the line
+      const lineGlow = document.createElement('div');
+      lineGlow.className = 've-line-glow';
+      lineGlow.setAttribute('aria-hidden', 'true');
+      lineEl.appendChild(lineGlow);
+
       const cachedWords: CachedWordRef[] = [];
 
       line.words.forEach((word, wIdx) => {
@@ -458,15 +620,18 @@ export class StageView {
           wordEl.classList.add('ve-word-adlib');
         }
 
+        // Curly apostrophe normalization
+        const formattedText = word.text.replace(/'/g, '’');
+
         let shearTopEl: HTMLElement | undefined;
         let shearBottomEl: HTMLElement | undefined;
 
         if (word.semanticEffect === 'FRACTURE') {
-          wordEl.innerHTML = `<span class="ve-fracture-top">${word.text}</span><span class="ve-fracture-bottom">${word.text}</span>`;
+          wordEl.innerHTML = `<span class="ve-fracture-top">${formattedText}</span><span class="ve-fracture-bottom">${formattedText}</span>`;
           shearTopEl = wordEl.querySelector('.ve-fracture-top') as HTMLElement;
           shearBottomEl = wordEl.querySelector('.ve-fracture-bottom') as HTMLElement;
         } else {
-          wordEl.textContent = word.text;
+          wordEl.textContent = formattedText;
         }
 
         const echoClones: HTMLElement[] = [];
@@ -487,7 +652,7 @@ export class StageView {
           wordIndex: wIdx,
           springZ: new HarmonicSpring(0, 140, 22),
           springBlur: new HarmonicSpring(0, 140, 22),
-          springScale: new HarmonicSpring(1.0, 150, 24),
+          springScale: new HarmonicSpring(1.0, 190, 22),
           springProgress: new HarmonicSpring(0.0, 200, 22),
           springGravityY: new HarmonicSpring(0, 160, 20),
           shearTopEl,
@@ -511,167 +676,172 @@ export class StageView {
     return cachedLines;
   }
 
+  public showTitleCard(title: string, artist: string, artUrl: string): void {
+    if (!this.titleCardEl) return;
+    const h = document.getElementById('ve-title-heading');
+    const a = document.getElementById('ve-title-artist');
+    const img = document.getElementById('ve-title-art') as HTMLImageElement;
+    if (h) h.textContent = title;
+    if (a) a.textContent = artist;
+    if (img && artUrl) img.src = artUrl;
+    this.titleCardEl.classList.add('is-visible');
+  }
+
+  public hideTitleCard(): void {
+    if (this.titleCardEl) {
+      this.titleCardEl.classList.remove('is-visible');
+    }
+  }
+
+  public setInterludeVisible(visible: boolean): void {
+    if (this.interludeEl) {
+      if (visible) this.interludeEl.classList.add('is-visible');
+      else this.interludeEl.classList.remove('is-visible');
+    }
+  }
+
+  public toggleHud(): void {
+    this.isHudVisible = !this.isHudVisible;
+    if (this.devHudEl) {
+      if (this.isHudVisible) this.devHudEl.classList.add('is-visible');
+      else this.devHudEl.classList.remove('is-visible');
+    }
+  }
+
+  public updateHud(fps: number, low1Percent: number, frameMs: number, energy: number, beat: number, layers: number): void {
+    if (!this.isHudVisible) return;
+    const f = document.getElementById('hud-fps');
+    const l = document.getElementById('hud-low');
+    const m = document.getElementById('hud-frame');
+    const e = document.getElementById('hud-energy');
+    const b = document.getElementById('hud-beat');
+    const ly = document.getElementById('hud-layers');
+    if (f) f.textContent = Math.round(fps).toString();
+    if (l) l.textContent = Math.round(low1Percent).toString();
+    if (m) m.textContent = frameMs.toFixed(1);
+    if (e) e.textContent = energy.toFixed(2);
+    if (b) b.textContent = beat.toFixed(2);
+    if (ly) ly.textContent = layers.toString();
+  }
+
   public getCachedLines(): CachedLineRef[] {
     return this.cachedLines;
   }
 
-  private renderControlPill(): void {
+  private renderControlDock(): void {
     if (!this.controlPillEl) return;
 
     this.controlPillEl.innerHTML = `
-      <!-- STYLES -->
-      <div style="display: flex; gap: 3px;">
-        <button class="ve-pill-btn ${this.currentStyle === 'convex' ? 'active' : ''}" data-style="convex">Convex</button>
-        <button class="ve-pill-btn ${this.currentStyle === 'drift' ? 'active' : ''}" data-style="drift">Drift</button>
-        <button class="ve-pill-btn ${this.currentStyle === 'editorial' ? 'active' : ''}" data-style="editorial">Editorial</button>
-        <button class="ve-pill-btn ${this.currentStyle === 'semantic' ? 'active' : ''}" data-style="semantic">Semantic</button>
-      </div>
+      <button class="ve-dock-btn ${this.currentStyle === 'convex' ? 'active' : ''}" data-style="convex" title="Optical Dome (Hero Look)">Convex</button>
+      <button class="ve-dock-btn ${this.currentStyle === 'drift' ? 'active' : ''}" data-style="drift" title="Unwrapped Ribbon">Drift</button>
+      <button class="ve-dock-btn ${this.currentStyle === 'editorial' ? 'active' : ''}" data-style="editorial" title="Swiss Print Press">Editorial</button>
+      <button class="ve-dock-btn ${this.currentStyle === 'semantic' ? 'active' : ''}" data-style="semantic" title="Living Typo-Physics">Semantic</button>
 
-      <div class="ve-pill-divider"></div>
+      <div class="ve-dock-divider"></div>
 
-      <!-- PALETTES -->
-      <div style="display: flex; gap: 3px;">
-        <button class="ve-pill-btn ${this.currentPaletteType === 'album' ? 'active' : ''}" data-palette="album">Album Sync</button>
-        <button class="ve-pill-btn ${this.currentPaletteType === 'editorial' ? 'active' : ''}" data-palette="editorial">Maroon &amp; Bone</button>
-        <button class="ve-pill-btn ${this.currentPaletteType === 'obsidian' ? 'active' : ''}" data-palette="obsidian">Obsidian</button>
-      </div>
+      <button class="ve-dock-btn ${this.currentPaletteType === 'album' ? 'active' : ''}" data-palette="album" title="OKLCH Album Art Sync">Album</button>
+      <button class="ve-dock-btn ${this.currentPaletteType === 'editorial' ? 'active' : ''}" data-palette="editorial" title="Bone & Maroon Press">Editorial</button>
+      <button class="ve-dock-btn ${this.currentPaletteType === 'obsidian' ? 'active' : ''}" data-palette="obsidian" title="Pure Dark OLED">Obsidian</button>
 
-      <div class="ve-pill-divider"></div>
+      <div class="ve-dock-divider"></div>
 
-      <!-- RIM TOGGLE -->
-      <button class="ve-pill-btn ${this.rimEnabled ? 'active' : ''}" id="ve-rim-btn">Rim ${this.rimEnabled ? 'On' : 'Off'}</button>
+      <button class="ve-dock-btn ${this.rimEnabled ? 'active' : ''}" id="ve-dock-rim-btn" title="Peripheral Bezel Bleed">${this.rimEnabled ? 'Rim On' : 'Rim Off'}</button>
 
-      <div class="ve-pill-divider"></div>
+      <div class="ve-dock-divider"></div>
 
-      <!-- SYNC OFFSET -->
-      <div style="display: flex; align-items: center; gap: 2px;">
-        <button class="ve-pill-btn" id="ve-sync-down">-50ms</button>
-        <span id="ve-sync-display" style="font-size: 9.5px; opacity: 0.65; min-width: 28px; text-align: center;">0ms</span>
-        <button class="ve-pill-btn" id="ve-sync-up">+50ms</button>
-      </div>
+      <button class="ve-dock-btn" id="ve-dock-sync-down" title="Retard sync 50ms">-50ms</button>
+      <span style="font-size: 10px; opacity: 0.6;" id="ve-dock-sync-val">${this.clock.getSyncOffset()}ms</span>
+      <button class="ve-dock-btn" id="ve-dock-sync-up" title="Advance sync 50ms">+50ms</button>
 
-      <div class="ve-pill-divider"></div>
+      <div class="ve-dock-divider"></div>
 
-      <!-- ESC CLOSE -->
-      <button class="ve-pill-btn" id="ve-close-btn" style="color: #FAF9F6; font-weight: 700;">
-        ESC
-      </button>
+      <button class="ve-dock-btn" id="ve-dock-close" title="Exit Fullscreen (Esc)">✕</button>
     `;
 
-    this.syncOffsetDisplayEl = document.getElementById('ve-sync-display');
-    this.updateSyncDisplay();
-    this.bindPillEvents();
-  }
-
-  private bindPillEvents(): void {
-    if (!this.controlPillEl) return;
+    this.syncOffsetDisplayEl = document.getElementById('ve-dock-sync-val');
 
     this.controlPillEl.querySelectorAll('[data-style]').forEach((btn) => {
       btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const style = (btn as HTMLElement).getAttribute('data-style') as VisualStyle;
-        if (style && style !== this.currentStyle) {
-          this.currentStyle = style;
-          try {
-            localStorage.setItem('verse_engine_style', style);
-          } catch {}
-          this.applyStyleClass(style);
-          this.callbacks.onStyleChange(style);
-          this.renderControlPill();
-        }
+        const style = (e.currentTarget as HTMLElement).getAttribute('data-style') as VisualStyle;
+        this.currentStyle = style;
+        try { localStorage.setItem('verse_engine_style', style); } catch {}
+        this.applyStyleClass(style);
+        this.renderControlDock();
+        this.callbacks.onStyleChange(style);
       });
     });
 
     this.controlPillEl.querySelectorAll('[data-palette]').forEach((btn) => {
       btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const palette = (btn as HTMLElement).getAttribute('data-palette') as PaletteType;
-        if (palette) {
-          this.currentPaletteType = palette;
-          try {
-            localStorage.setItem('verse_engine_palette', palette);
-          } catch {}
-          this.callbacks.onPaletteChange(palette);
-          this.renderControlPill();
-        }
+        const palette = (e.currentTarget as HTMLElement).getAttribute('data-palette') as PaletteType;
+        this.currentPaletteType = palette;
+        try { localStorage.setItem('verse_engine_palette', palette); } catch {}
+        this.renderControlDock();
+        this.callbacks.onPaletteChange(palette);
       });
     });
 
-    document.getElementById('ve-rim-btn')?.addEventListener('click', (e) => {
-      e.stopPropagation();
+    const rimBtn = document.getElementById('ve-dock-rim-btn');
+    rimBtn?.addEventListener('click', () => {
       this.rimEnabled = !this.rimEnabled;
-      try {
-        localStorage.setItem('verse_engine_rim', this.rimEnabled ? 'true' : 'false');
-      } catch {}
+      try { localStorage.setItem('verse_engine_rim', String(this.rimEnabled)); } catch {}
+      this.renderControlDock();
       this.callbacks.onRimToggle(this.rimEnabled);
-      this.renderControlPill();
     });
 
-    document.getElementById('ve-sync-down')?.addEventListener('click', (e) => {
-      e.stopPropagation();
-      this.clock.adjustSyncOffset(-50);
-      this.updateSyncDisplay();
+    document.getElementById('ve-dock-sync-down')?.addEventListener('click', () => {
+      const val = this.clock.adjustSyncOffset(-50);
+      if (this.syncOffsetDisplayEl) this.syncOffsetDisplayEl.textContent = `${val}ms`;
     });
 
-    document.getElementById('ve-sync-up')?.addEventListener('click', (e) => {
-      e.stopPropagation();
-      this.clock.adjustSyncOffset(50);
-      this.updateSyncDisplay();
+    document.getElementById('ve-dock-sync-up')?.addEventListener('click', () => {
+      const val = this.clock.adjustSyncOffset(50);
+      if (this.syncOffsetDisplayEl) this.syncOffsetDisplayEl.textContent = `${val}ms`;
     });
 
-    document.getElementById('ve-close-btn')?.addEventListener('click', (e) => {
-      e.stopPropagation();
+    document.getElementById('ve-dock-close')?.addEventListener('click', () => {
       this.callbacks.onClose();
     });
   }
 
-  private updateSyncDisplay(): void {
-    if (this.syncOffsetDisplayEl) {
-      const offset = this.clock.getSyncOffset();
-      this.syncOffsetDisplayEl.textContent = `${offset >= 0 ? '+' : ''}${offset}ms`;
-    }
-  }
-
   private bindActivityListeners(): void {
-    if (!this.rootEl) return;
-
-    const resetIdleTimer = () => {
-      if (!this.rootEl || !this.controlPillEl) return;
-      this.rootEl.style.cursor = 'default';
-      this.controlPillEl.style.opacity = '1';
-      this.controlPillEl.style.transform = 'translateX(-50%) translateY(0)';
-      this.controlPillEl.style.pointerEvents = 'auto';
+    const showPill = () => {
+      if (this.controlPillEl) {
+        this.controlPillEl.style.opacity = '1';
+        this.controlPillEl.style.transform = 'translateX(-50%) translateY(0)';
+      }
+      if (this.rootEl) {
+        this.rootEl.style.cursor = 'default';
+      }
 
       if (this.hideTimeout !== null) {
         window.clearTimeout(this.hideTimeout);
       }
 
+      // Auto-hide after 2s of idle
       this.hideTimeout = window.setTimeout(() => {
-        if (!this.rootEl || !this.controlPillEl) return;
-        this.rootEl.style.cursor = 'none';
-        this.controlPillEl.style.opacity = '0';
-        this.controlPillEl.style.transform = 'translateX(-50%) translateY(16px)';
-        this.controlPillEl.style.pointerEvents = 'none';
+        if (this.controlPillEl) {
+          this.controlPillEl.style.opacity = '0';
+          this.controlPillEl.style.transform = 'translateX(-50%) translateY(14px)';
+        }
+        if (this.rootEl) {
+          this.rootEl.style.cursor = 'none';
+        }
       }, 2000);
     };
 
-    window.addEventListener('mousemove', resetIdleTimer);
-    window.addEventListener('keydown', resetIdleTimer);
-    resetIdleTimer();
+    window.addEventListener('mousemove', showPill);
+    window.addEventListener('mousedown', showPill);
+    showPill();
   }
 
   public unmount(): void {
     if (this.hideTimeout !== null) {
       window.clearTimeout(this.hideTimeout);
-      this.hideTimeout = null;
     }
-    if (this.rootEl && this.rootEl.parentElement) {
+    if (this.rootEl?.parentElement) {
       this.rootEl.parentElement.removeChild(this.rootEl);
     }
     this.rootEl = null;
-    this.rimPrimaryEl = null;
-    this.cameraEl = null;
-    this.lyricsContainerEl = null;
-    this.controlPillEl = null;
   }
 }

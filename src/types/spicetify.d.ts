@@ -72,6 +72,8 @@ declare namespace Spicetify {
     };
   }
 
+  function getAudioData(): Promise<AudioAnalysis | null>;
+
   namespace Player {
     function getProgress(): number;
     function getDuration(): number;
@@ -80,6 +82,9 @@ declare namespace Spicetify {
     function addEventListener(event: 'songchange' | 'onplaypause' | 'onprogress' | string, callback: (event?: any) => void): void;
     function removeEventListener(event: 'songchange' | 'onplaypause' | 'onprogress' | string, callback: (event?: any) => void): void;
     function seek(ms: number): void;
+    function play(): Promise<void>;
+    function pause(): Promise<void>;
+    function togglePlay(): void;
     const getPlaybackSpeed: (() => number) | undefined;
   }
 
