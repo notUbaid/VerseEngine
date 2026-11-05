@@ -1,0 +1,192 @@
+{
+  "tracks": [
+    {
+      "uri": "spotify:track:harness_latin_exact",
+      "name": "Solar Eclipse",
+      "artist": "Drake & Don Toliver",
+      "album": "For All The Dogs",
+      "albumArtUrl": "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=600&auto=format&fit=crop&q=80",
+      "durationMs": 30000,
+      "audioUrl": "sample.wav",
+      "hasLyrics": true,
+      "syncType": "WORD_SYNCED",
+      "lines": [
+        {
+          "id": "line_0",
+          "index": 0,
+          "startMs": 1500,
+          "endMs": 6200,
+          "timingSource": "exact",
+          "words": [
+            { "id": "w_0_0", "text": "Yeah,", "startMs": 1500, "endMs": 2000, "timingSource": "exact", "isAdLib": false },
+            { "id": "w_0_1", "text": "she", "startMs": 2050, "endMs": 2400, "timingSource": "exact", "isAdLib": false },
+            { "id": "w_0_2", "text": "from", "startMs": 2450, "endMs": 2800, "timingSource": "exact", "isAdLib": false },
+            { "id": "w_0_3", "text": "Texas,", "startMs": 2850, "endMs": 3500, "timingSource": "exact", "isAdLib": false },
+            { "id": "w_0_4", "text": "I", "startMs": 3550, "endMs": 3800, "timingSource": "exact", "isAdLib": false },
+            { "id": "w_0_5", "text": "can", "startMs": 3850, "endMs": 4200, "timingSource": "exact", "isAdLib": false },
+            { "id": "w_0_6", "text": "tell", "startMs": 4250, "endMs": 4800, "timingSource": "exact", "isAdLib": false },
+            { "id": "w_0_7", "text": "by", "startMs": 4850, "endMs": 5100, "timingSource": "exact", "isAdLib": false },
+            { "id": "w_0_8", "text": "the", "startMs": 5150, "endMs": 5400, "timingSource": "exact", "isAdLib": false },
+            { "id": "w_0_9", "text": "way", "startMs": 5450, "endMs": 5800, "timingSource": "exact", "isAdLib": false },
+            { "id": "w_0_10", "text": "she", "startMs": 5850, "endMs": 6050, "timingSource": "exact", "isAdLib": false },
+            { "id": "w_0_11", "text": "talk", "startMs": 6100, "endMs": 6600, "timingSource": "exact", "isAdLib": false }
+          ]
+        },
+        {
+          "id": "line_1",
+          "index": 1,
+          "startMs": 6800,
+          "endMs": 11800,
+          "timingSource": "exact",
+          "words": [
+            { "id": "w_1_0", "text": "She", "startMs": 6800, "endMs": 7100, "timingSource": "exact", "isAdLib": false },
+            { "id": "w_1_1", "text": "down", "startMs": 7150, "endMs": 7500, "timingSource": "exact", "isAdLib": false },
+            { "id": "w_1_2", "text": "to", "startMs": 7550, "endMs": 7800, "timingSource": "exact", "isAdLib": false },
+            { "id": "w_1_3", "text": "take", "startMs": 7850, "endMs": 8300, "timingSource": "exact", "isAdLib": false },
+            { "id": "w_1_4", "text": "a", "startMs": 8350, "endMs": 8500, "timingSource": "exact", "isAdLib": false },
+            { "id": "w_1_5", "text": "hundred", "startMs": 8550, "endMs": 9100, "timingSource": "exact", "isAdLib": false },
+            { "id": "w_1_6", "text": "shots", "startMs": 9150, "endMs": 9700, "timingSource": "exact", "isAdLib": false },
+            { "id": "w_1_7", "text": "with", "startMs": 9750, "endMs": 10100, "timingSource": "exact", "isAdLib": false },
+            { "id": "w_1_8", "text": "me", "startMs": 10150, "endMs": 10800, "timingSource": "exact", "isAdLib": false },
+            { "id": "w_1_9", "text": "(yeah)", "startMs": 10900, "endMs": 11800, "timingSource": "exact", "isAdLib": true }
+          ]
+        },
+        {
+          "id": "line_2",
+          "index": 2,
+          "startMs": 12000,
+          "endMs": 17500,
+          "timingSource": "exact",
+          "words": [
+            { "id": "w_2_0", "text": "Solar", "startMs": 12000, "endMs": 12600, "timingSource": "exact", "isAdLib": false },
+            { "id": "w_2_1", "text": "eclipse", "startMs": 12650, "endMs": 13400, "timingSource": "exact", "isAdLib": false },
+            { "id": "w_2_2", "text": "in", "startMs": 13450, "endMs": 13700, "timingSource": "exact", "isAdLib": false },
+            { "id": "w_2_3", "text": "the", "startMs": 13750, "endMs": 14000, "timingSource": "exact", "isAdLib": false },
+            { "id": "w_2_4", "text": "morning", "startMs": 14050, "endMs": 14700, "timingSource": "exact", "isAdLib": false },
+            { "id": "w_2_5", "text": "sun", "startMs": 14750, "endMs": 15800, "timingSource": "exact", "isAdLib": false }
+          ]
+        },
+        {
+          "id": "line_3",
+          "index": 3,
+          "startMs": 18000,
+          "endMs": 24000,
+          "timingSource": "exact",
+          "words": [
+            { "id": "w_3_0", "text": "Heartbeat", "startMs": 18000, "endMs": 18800, "timingSource": "exact", "isAdLib": false },
+            { "id": "w_3_1", "text": "racing", "startMs": 18850, "endMs": 19600, "timingSource": "exact", "isAdLib": false },
+            { "id": "w_3_2", "text": "through", "startMs": 19650, "endMs": 20100, "timingSource": "exact", "isAdLib": false },
+            { "id": "w_3_3", "text": "the", "startMs": 20150, "endMs": 20400, "timingSource": "exact", "isAdLib": false },
+            { "id": "w_3_4", "text": "midnight", "startMs": 20450, "endMs": 21200, "timingSource": "exact", "isAdLib": false },
+            { "id": "w_3_5", "text": "air", "startMs": 21250, "endMs": 22500, "timingSource": "exact", "isAdLib": false }
+          ]
+        }
+      ]
+    },
+    {
+      "uri": "spotify:track:harness_hindi_exact",
+      "name": "मेरा प्यार (Mera Pyaar)",
+      "artist": "Arijit Singh & Pritam",
+      "album": "रंगून (Rangoon)",
+      "albumArtUrl": "https://images.unsplash.com/photo-1534447677768-be436bb09401?w=600&auto=format&fit=crop&q=80",
+      "durationMs": 30000,
+      "audioUrl": "sample.wav",
+      "hasLyrics": true,
+      "syncType": "WORD_SYNCED",
+      "lines": [
+        {
+          "id": "hi_0",
+          "index": 0,
+          "startMs": 1500,
+          "endMs": 7000,
+          "timingSource": "exact",
+          "words": [
+            { "id": "hw_0_0", "text": "मेरा", "startMs": 1500, "endMs": 2200, "timingSource": "exact", "isAdLib": false },
+            { "id": "hw_0_1", "text": "प्यार", "startMs": 2250, "endMs": 3100, "timingSource": "exact", "isAdLib": false },
+            { "id": "hw_0_2", "text": "सच्चा", "startMs": 3150, "endMs": 4000, "timingSource": "exact", "isAdLib": false },
+            { "id": "hw_0_3", "text": "है", "startMs": 4050, "endMs": 4600, "timingSource": "exact", "isAdLib": false },
+            { "id": "hw_0_4", "text": "तेरे", "startMs": 4650, "endMs": 5400, "timingSource": "exact", "isAdLib": false },
+            { "id": "hw_0_5", "text": "लिए", "startMs": 5450, "endMs": 6500, "timingSource": "exact", "isAdLib": false }
+          ]
+        },
+        {
+          "id": "hi_1",
+          "index": 1,
+          "startMs": 7200,
+          "endMs": 13500,
+          "timingSource": "exact",
+          "words": [
+            { "id": "hw_1_0", "text": "नित", "startMs": 7200, "endMs": 7800, "timingSource": "exact", "isAdLib": false },
+            { "id": "hw_1_1", "text": "नवी", "startMs": 7850, "endMs": 8500, "timingSource": "exact", "isAdLib": false },
+            { "id": "hw_1_2", "text": "था", "startMs": 8550, "endMs": 9100, "timingSource": "exact", "isAdLib": false },
+            { "id": "hw_1_3", "text": "नवी", "startMs": 9150, "endMs": 9700, "timingSource": "exact", "isAdLib": false },
+            { "id": "hw_1_4", "text": "नवी", "startMs": 9750, "endMs": 10300, "timingSource": "exact", "isAdLib": false },
+            { "id": "hw_1_5", "text": "बोज़", "startMs": 10350, "endMs": 11400, "timingSource": "exact", "isAdLib": false },
+            { "id": "hw_1_6", "text": "(हाँ)", "startMs": 11500, "endMs": 12800, "timingSource": "exact", "isAdLib": true }
+          ]
+        },
+        {
+          "id": "hi_2",
+          "index": 2,
+          "startMs": 13800,
+          "endMs": 20000,
+          "timingSource": "exact",
+          "words": [
+            { "id": "hw_2_0", "text": "दिल", "startMs": 13800, "endMs": 14500, "timingSource": "exact", "isAdLib": false },
+            { "id": "hw_2_1", "text": "की", "startMs": 14550, "endMs": 15000, "timingSource": "exact", "isAdLib": false },
+            { "id": "hw_2_2", "text": "धड़कन", "startMs": 15050, "endMs": 16000, "timingSource": "exact", "isAdLib": false },
+            { "id": "hw_2_3", "text": "में", "startMs": 16050, "endMs": 16500, "timingSource": "exact", "isAdLib": false },
+            { "id": "hw_2_4", "text": "तू", "startMs": 16550, "endMs": 17200, "timingSource": "exact", "isAdLib": false },
+            { "id": "hw_2_5", "text": "ही", "startMs": 17250, "endMs": 17800, "timingSource": "exact", "isAdLib": false },
+            { "id": "hw_2_6", "text": "तू", "startMs": 17850, "endMs": 18500, "timingSource": "exact", "isAdLib": false },
+            { "id": "hw_2_7", "text": "बसा", "startMs": 18550, "endMs": 19600, "timingSource": "exact", "isAdLib": false }
+          ]
+        }
+      ]
+    },
+    {
+      "uri": "spotify:track:harness_japanese_exact",
+      "name": "夜空の星 (Yozora no Hoshi)",
+      "artist": "Aimer & Vaundy",
+      "album": "星の降る夜に",
+      "albumArtUrl": "https://images.unsplash.com/photo-1509198397868-475647b2a1e5?w=600&auto=format&fit=crop&q=80",
+      "durationMs": 30000,
+      "audioUrl": "sample.wav",
+      "hasLyrics": true,
+      "syncType": "WORD_SYNCED",
+      "lines": [
+        {
+          "id": "ja_0",
+          "index": 0,
+          "startMs": 1500,
+          "endMs": 7500,
+          "timingSource": "exact",
+          "words": [
+            { "id": "jw_0_0", "text": "夜空", "startMs": 1500, "endMs": 2300, "timingSource": "exact", "isAdLib": false },
+            { "id": "jw_0_1", "text": "に", "startMs": 2350, "endMs": 2800, "timingSource": "exact", "isAdLib": false },
+            { "id": "jw_0_2", "text": "輝く", "startMs": 2850, "endMs": 3800, "timingSource": "exact", "isAdLib": false },
+            { "id": "jw_0_3", "text": "星", "startMs": 3850, "endMs": 4600, "timingSource": "exact", "isAdLib": false },
+            { "id": "jw_0_4", "text": "を", "startMs": 4650, "endMs": 5100, "timingSource": "exact", "isAdLib": false },
+            { "id": "jw_0_5", "text": "見上げ", "startMs": 5150, "endMs": 6200, "timingSource": "exact", "isAdLib": false },
+            { "id": "jw_0_6", "text": "て", "startMs": 6250, "endMs": 7000, "timingSource": "exact", "isAdLib": false }
+          ]
+        },
+        {
+          "id": "ja_1",
+          "index": 1,
+          "startMs": 7800,
+          "endMs": 14000,
+          "timingSource": "exact",
+          "words": [
+            { "id": "jw_1_0", "text": "静かな", "startMs": 7800, "endMs": 8800, "timingSource": "exact", "isAdLib": false },
+            { "id": "jw_1_1", "text": "夜", "startMs": 8850, "endMs": 9500, "timingSource": "exact", "isAdLib": false },
+            { "id": "jw_1_2", "text": "に", "startMs": 9550, "endMs": 10000, "timingSource": "exact", "isAdLib": false },
+            { "id": "jw_1_3", "text": "響く", "startMs": 10050, "endMs": 11000, "timingSource": "exact", "isAdLib": false },
+            { "id": "jw_1_4", "text": "足音", "startMs": 11050, "endMs": 12200, "timingSource": "exact", "isAdLib": false },
+            { "id": "jw_1_5", "text": "(そう)", "startMs": 12300, "endMs": 13600, "timingSource": "exact", "isAdLib": true }
+          ]
+        }
+      ]
+    }
+  ]
+}

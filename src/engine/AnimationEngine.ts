@@ -492,6 +492,7 @@ export class AnimationEngine {
 
   private handleFilmMoments(currentMs: number, targetLineIdx: number, energy: number, beatPulse: number): void {
     if (!this.cachedLines || this.cachedLines.length === 0 || !this.stageView) return;
+    if (this.stageView.isTitleCardSticky) return; // Keep loading/empty/error states intact
 
     const firstLine = this.cachedLines[0].line;
     const lastLine = this.cachedLines[this.cachedLines.length - 1].line;

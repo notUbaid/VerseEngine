@@ -39,6 +39,8 @@ export class VerseEngineApp {
   private isOpen: boolean = false;
   private playbarButton: any = null;
   private topbarButton: any = null;
+  private currentLoadRequestId: number = 0;
+  private loadAbortController: AbortController | null = null;
 
   private stageView: StageView | null = null;
   private animationEngine: AnimationEngine;
@@ -230,14 +232,32 @@ export class VerseEngineApp {
     const trackItem = Spicetify.Player.data.item;
     if (!trackItem?.uri) return;
 
+    const reqId = ++this.currentLoadRequestId;
+    if (this.loadAbortController) {
+      this.loadAbortController.abort();
+    }
+    this.loadAbortController = new AbortController();
+
+    const title = trackItem.name || 'Unknown Track';
+    const artist = trackItem.artists?.map((a: any) => a.name).join(', ') || '';
+    const rawArtUrl = trackItem.album?.images?.[0]?.url ?? '';
+    const albumArtUrl = AmbientLight.resolveImageUrl(rawArtUrl);
+
+    // If stage is already open, show loading state immediately
+    if (this.isOpen && this.stageView) {
+      this.stageView.showLoading(title, artist, albumArtUrl);
+    }
+
     await this.clock.setTrackUri(trackItem.uri);
+    if (reqId !== this.currentLoadRequestId) return;
 
     try {
-      const albumArtUrl = trackItem.album?.images?.[0]?.url ?? '';
       const [processedTrack, palette] = await Promise.all([
         this.lyricProvider.getTrackLyrics(trackItem),
         AmbientLight.getPalette(this.currentPaletteType, albumArtUrl)
       ]);
+
+      if (reqId !== this.currentLoadRequestId) return;
 
       this.currentTrack = processedTrack;
 
@@ -254,12 +274,25 @@ export class VerseEngineApp {
         await this.webgl.loadAlbumTexture(albumArtUrl);
       }
 
-      // If stage is already open, re-render lyrics into it immediately
+      if (reqId !== this.currentLoadRequestId) return;
+
+      // If stage is already open, re-render lyrics or empty state into it immediately
       if (this.isOpen && this.stageView) {
-        this.applyTrackToStage(this.stageView, processedTrack, palette);
+        if (!processedTrack.lines || processedTrack.lines.length === 0) {
+          this.stageView.showEmpty(title, artist, 'No synced lyrics found', albumArtUrl);
+          this.animationEngine.stop();
+        } else {
+          this.stageView.hideTitleCard();
+          this.applyTrackToStage(this.stageView, processedTrack, palette);
+          this.animationEngine.start();
+        }
       }
     } catch (err) {
+      if (reqId !== this.currentLoadRequestId) return;
       console.error('[VerseEngine] Track load error:', err);
+      if (this.isOpen && this.stageView) {
+        this.stageView.showError(title, artist, 'Error loading track lyrics', albumArtUrl);
+      }
     }
   }
 
@@ -317,30 +350,39 @@ export class VerseEngineApp {
 
     if (!this.currentTrack) {
       await this.loadCurrentTrack();
-    }
-
-    if (this.currentTrack && this.currentPalette) {
+    } else if (this.currentPalette) {
       if (this.currentTrack.albumArtUrl) {
         await this.webgl.loadAlbumTexture(this.currentTrack.albumArtUrl);
       }
       this.webgl.setPalette(this.currentPalette);
-      this.applyTrackToStage(this.stageView, this.currentTrack, this.currentPalette);
 
-      this.animationEngine.bindElements(
-        rootEl,
-        cameraEl,
-        ambientRimEl,
-        lyricsContainerEl,
-        this.stageView.getCachedLines(),
-        this.currentTrack
-      );
-      requestAnimationFrame(() => {
-        this.animationEngine.measureOffsets();
-      });
-      this.animationEngine.setStyle(this.currentStyle);
-      this.animationEngine.setPalette(this.currentPalette);
-      this.animationEngine.setRimEnabled(this.rimEnabled);
-      this.animationEngine.start();
+      if (!this.currentTrack.lines || this.currentTrack.lines.length === 0) {
+        this.stageView.showEmpty(
+          this.currentTrack.title,
+          this.currentTrack.artist,
+          'No synced lyrics found',
+          this.currentTrack.albumArtUrl
+        );
+      } else {
+        this.stageView.hideTitleCard();
+        this.applyTrackToStage(this.stageView, this.currentTrack, this.currentPalette);
+
+        this.animationEngine.bindElements(
+          rootEl,
+          cameraEl,
+          ambientRimEl,
+          lyricsContainerEl,
+          this.stageView.getCachedLines(),
+          this.currentTrack
+        );
+        requestAnimationFrame(() => {
+          this.animationEngine.measureOffsets();
+        });
+        this.animationEngine.setStyle(this.currentStyle);
+        this.animationEngine.setPalette(this.currentPalette);
+        this.animationEngine.setRimEnabled(this.rimEnabled);
+        this.animationEngine.start();
+      }
     }
   }
 

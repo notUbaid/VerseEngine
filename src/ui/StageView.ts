@@ -39,10 +39,11 @@ export class StageView {
   private syncOffsetDisplayEl: HTMLElement | null = null;
   private cachedLines: CachedLineRef[] = [];
 
+  public isTitleCardSticky: boolean = false;
+
   constructor(callbacks: StageCallbacks) {
     this.callbacks = callbacks;
     this.loadSavedPreferences();
-    this.injectFontCascades();
   }
 
   private loadSavedPreferences(): void {
@@ -72,18 +73,6 @@ export class StageView {
 
   public getSavedRimEnabled(): boolean {
     return this.rimEnabled;
-  }
-
-  private injectFontCascades(): void {
-    const id = 'verse-engine-fonts';
-    if (!document.getElementById(id)) {
-      const link = document.createElement('link');
-      link.id = id;
-      link.rel = 'stylesheet';
-      link.href =
-        'https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Instrument+Serif:ital@0;1&family=Plus+Jakarta+Sans:wght@600;700;800&family=Syne:wght@700;800&display=swap';
-      document.head.appendChild(link);
-    }
   }
 
   public mount(): {
@@ -335,7 +324,7 @@ export class StageView {
           opacity: 0;
         }
 
-        /* ── FILM TITLE CARD INTRO & OUTRO ── */
+        /* ── FILM TITLE CARD INTRO & OUTRO & EMPTY/LOADING STATES ── */
         #ve-title-card {
           position: absolute;
           inset: 0;
@@ -346,7 +335,7 @@ export class StageView {
           z-index: 20;
           pointer-events: none;
           opacity: 0;
-          transition: opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+          transition: opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1);
         }
         #ve-title-card.is-visible {
           opacity: 1;
@@ -356,25 +345,51 @@ export class StageView {
           height: 140px;
           border-radius: 16px;
           box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6), 0 0 40px var(--ve-primary);
-          margin-bottom: 2rem;
+          margin-bottom: 1.8rem;
           object-fit: cover;
         }
         .ve-title-heading {
-          font-size: clamp(2.8rem, 5.0vw, 5.2rem);
+          font-size: clamp(2.4rem, 4.4vw, 4.4rem);
           font-weight: 800;
           letter-spacing: -0.035em;
           color: var(--ve-highlight, #FAF9F6);
           text-align: center;
           line-height: 1.1;
           margin: 0;
+          padding: 0 2rem;
+          max-width: 80vw;
         }
         .ve-title-artist {
-          font-family: 'Instrument Serif', Georgia, serif;
+          font-family: 'Instrument Serif', "New York", Didot, Georgia, serif;
           font-style: italic;
-          font-size: clamp(1.8rem, 2.8vw, 3.0rem);
+          font-size: clamp(1.6rem, 2.4vw, 2.6rem);
           color: var(--ve-accent, #E03E52);
           margin-top: 0.6rem;
           opacity: 0.90;
+        }
+        .ve-title-status {
+          font-size: clamp(0.95rem, 1.2vw, 1.25rem);
+          font-weight: 600;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+          color: var(--ve-text-inactive, rgba(250, 249, 246, 0.55));
+          margin-top: 1.4rem;
+        }
+        .ve-title-spinner {
+          width: 22px;
+          height: 22px;
+          margin-top: 1.0rem;
+          border: 2px solid rgba(255, 255, 255, 0.15);
+          border-top-color: var(--ve-primary, #E03E52);
+          border-radius: 50%;
+          animation: veSpinnerSpin 0.8s linear infinite;
+          display: none;
+        }
+        .ve-title-spinner.is-visible {
+          display: block;
+        }
+        @keyframes veSpinnerSpin {
+          to { transform: rotate(360deg); }
         }
 
         /* ── INSTRUMENTAL INTERLUDE (Breathing Dots) ── */
@@ -499,6 +514,8 @@ export class StageView {
         <img class="ve-title-art" id="ve-title-art" src="" alt="Album Art" />
         <h1 class="ve-title-heading" id="ve-title-heading">Song Title</h1>
         <div class="ve-title-artist" id="ve-title-artist">Artist</div>
+        <div class="ve-title-status" id="ve-title-status"></div>
+        <div class="ve-title-spinner" id="ve-title-spinner"></div>
       </div>
 
       <div id="ve-interlude">
@@ -676,20 +693,67 @@ export class StageView {
     return cachedLines;
   }
 
-  public showTitleCard(title: string, artist: string, artUrl: string): void {
-    if (!this.titleCardEl) return;
-    const h = document.getElementById('ve-title-heading');
-    const a = document.getElementById('ve-title-artist');
-    const img = document.getElementById('ve-title-art') as HTMLImageElement;
-    if (h) h.textContent = title;
-    if (a) a.textContent = artist;
-    if (img && artUrl) img.src = artUrl;
-    this.titleCardEl.classList.add('is-visible');
+  public showLoading(title: string, artist: string, artUrl?: string): void {
+    this.isTitleCardSticky = true;
+    this.setTitleCardContent(title, artist, 'Locating synced lyrics…', artUrl, true);
+    if (this.titleCardEl) this.titleCardEl.classList.add('is-visible');
+  }
+
+  public showEmpty(title: string, artist: string, statusMsg: string, artUrl?: string): void {
+    this.isTitleCardSticky = true;
+    this.setTitleCardContent(title, artist, statusMsg, artUrl, false);
+    if (this.titleCardEl) this.titleCardEl.classList.add('is-visible');
+  }
+
+  public showError(title: string, artist: string, errorMsg: string, artUrl?: string): void {
+    this.isTitleCardSticky = true;
+    this.setTitleCardContent(title, artist, errorMsg, artUrl, false);
+    if (this.titleCardEl) this.titleCardEl.classList.add('is-visible');
+  }
+
+  public showTitleCard(title: string, artist: string, artUrl?: string): void {
+    this.isTitleCardSticky = false;
+    this.setTitleCardContent(title, artist, '', artUrl, false);
+    if (this.titleCardEl) this.titleCardEl.classList.add('is-visible');
   }
 
   public hideTitleCard(): void {
+    this.isTitleCardSticky = false;
     if (this.titleCardEl) {
       this.titleCardEl.classList.remove('is-visible');
+    }
+  }
+
+  private setTitleCardContent(
+    title: string,
+    artist: string,
+    status: string,
+    artUrl?: string,
+    showSpinner: boolean = false
+  ): void {
+    const h = document.getElementById('ve-title-heading');
+    const a = document.getElementById('ve-title-artist');
+    const s = document.getElementById('ve-title-status');
+    const sp = document.getElementById('ve-title-spinner');
+    const img = document.getElementById('ve-title-art') as HTMLImageElement;
+
+    if (h) h.textContent = title;
+    if (a) a.textContent = artist;
+    if (s) {
+      s.textContent = status;
+      s.style.display = status ? 'block' : 'none';
+    }
+    if (sp) {
+      if (showSpinner) sp.classList.add('is-visible');
+      else sp.classList.remove('is-visible');
+    }
+    if (img && artUrl) {
+      img.src = artUrl.startsWith('spotify:image:')
+        ? `https://i.scdn.co/image/${artUrl.replace('spotify:image:', '')}`
+        : artUrl;
+      img.style.display = 'block';
+    } else if (img && !artUrl) {
+      img.style.display = 'none';
     }
   }
 

@@ -1063,11 +1063,13 @@ var VerseEngineBundle = (() => {
       const rawAudioMs = this.getSafeProgress();
       const targetAudioMs = rawAudioMs + _Clock.LOOKAHEAD_MS + this.syncOffsetMs;
       const err = targetAudioMs - this.renderMs;
-      if (Math.abs(err) > 150) {
+      if (!this.isPlaying) {
+        this.renderMs = targetAudioMs;
+      } else if (Math.abs(err) > 150) {
         this.renderMs = targetAudioMs;
       } else {
-        const forwardDelta = this.isPlaying ? dt * 1e3 : 0;
-        const slewRate = Math.min(1, dt * 8);
+        const forwardDelta = dt * 1e3;
+        const slewRate = Math.min(1, dt * 6);
         this.renderMs += forwardDelta + err * slewRate;
       }
       this.lastPerfTime = now;
@@ -1567,6 +1569,7 @@ var VerseEngineBundle = (() => {
     }
     handleFilmMoments(currentMs, targetLineIdx, energy, beatPulse) {
       if (!this.cachedLines || this.cachedLines.length === 0 || !this.stageView) return;
+      if (this.stageView.isTitleCardSticky) return;
       const firstLine = this.cachedLines[0].line;
       const lastLine = this.cachedLines[this.cachedLines.length - 1].line;
       if (currentMs < firstLine.startMs - 500) {
@@ -2540,10 +2543,10 @@ void main() {
     isHudVisible = false;
     syncOffsetDisplayEl = null;
     cachedLines = [];
+    isTitleCardSticky = false;
     constructor(callbacks) {
       this.callbacks = callbacks;
       this.loadSavedPreferences();
-      this.injectFontCascades();
     }
     loadSavedPreferences() {
       try {
@@ -2570,16 +2573,6 @@ void main() {
     }
     getSavedRimEnabled() {
       return this.rimEnabled;
-    }
-    injectFontCascades() {
-      const id = "verse-engine-fonts";
-      if (!document.getElementById(id)) {
-        const link = document.createElement("link");
-        link.id = id;
-        link.rel = "stylesheet";
-        link.href = "https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Instrument+Serif:ital@0;1&family=Plus+Jakarta+Sans:wght@600;700;800&family=Syne:wght@700;800&display=swap";
-        document.head.appendChild(link);
-      }
     }
     mount() {
       let root = document.getElementById("verse-engine-stage");
@@ -2821,7 +2814,7 @@ void main() {
           opacity: 0;
         }
 
-        /* \u2500\u2500 FILM TITLE CARD INTRO & OUTRO \u2500\u2500 */
+        /* \u2500\u2500 FILM TITLE CARD INTRO & OUTRO & EMPTY/LOADING STATES \u2500\u2500 */
         #ve-title-card {
           position: absolute;
           inset: 0;
@@ -2832,7 +2825,7 @@ void main() {
           z-index: 20;
           pointer-events: none;
           opacity: 0;
-          transition: opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+          transition: opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1);
         }
         #ve-title-card.is-visible {
           opacity: 1;
@@ -2842,25 +2835,51 @@ void main() {
           height: 140px;
           border-radius: 16px;
           box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6), 0 0 40px var(--ve-primary);
-          margin-bottom: 2rem;
+          margin-bottom: 1.8rem;
           object-fit: cover;
         }
         .ve-title-heading {
-          font-size: clamp(2.8rem, 5.0vw, 5.2rem);
+          font-size: clamp(2.4rem, 4.4vw, 4.4rem);
           font-weight: 800;
           letter-spacing: -0.035em;
           color: var(--ve-highlight, #FAF9F6);
           text-align: center;
           line-height: 1.1;
           margin: 0;
+          padding: 0 2rem;
+          max-width: 80vw;
         }
         .ve-title-artist {
-          font-family: 'Instrument Serif', Georgia, serif;
+          font-family: 'Instrument Serif', "New York", Didot, Georgia, serif;
           font-style: italic;
-          font-size: clamp(1.8rem, 2.8vw, 3.0rem);
+          font-size: clamp(1.6rem, 2.4vw, 2.6rem);
           color: var(--ve-accent, #E03E52);
           margin-top: 0.6rem;
           opacity: 0.90;
+        }
+        .ve-title-status {
+          font-size: clamp(0.95rem, 1.2vw, 1.25rem);
+          font-weight: 600;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+          color: var(--ve-text-inactive, rgba(250, 249, 246, 0.55));
+          margin-top: 1.4rem;
+        }
+        .ve-title-spinner {
+          width: 22px;
+          height: 22px;
+          margin-top: 1.0rem;
+          border: 2px solid rgba(255, 255, 255, 0.15);
+          border-top-color: var(--ve-primary, #E03E52);
+          border-radius: 50%;
+          animation: veSpinnerSpin 0.8s linear infinite;
+          display: none;
+        }
+        .ve-title-spinner.is-visible {
+          display: block;
+        }
+        @keyframes veSpinnerSpin {
+          to { transform: rotate(360deg); }
         }
 
         /* \u2500\u2500 INSTRUMENTAL INTERLUDE (Breathing Dots) \u2500\u2500 */
@@ -2985,6 +3004,8 @@ void main() {
         <img class="ve-title-art" id="ve-title-art" src="" alt="Album Art" />
         <h1 class="ve-title-heading" id="ve-title-heading">Song Title</h1>
         <div class="ve-title-artist" id="ve-title-artist">Artist</div>
+        <div class="ve-title-status" id="ve-title-status"></div>
+        <div class="ve-title-spinner" id="ve-title-spinner"></div>
       </div>
 
       <div id="ve-interlude">
@@ -3136,19 +3157,53 @@ void main() {
       this.cachedLines = cachedLines;
       return cachedLines;
     }
+    showLoading(title, artist, artUrl) {
+      this.isTitleCardSticky = true;
+      this.setTitleCardContent(title, artist, "Locating synced lyrics\u2026", artUrl, true);
+      if (this.titleCardEl) this.titleCardEl.classList.add("is-visible");
+    }
+    showEmpty(title, artist, statusMsg, artUrl) {
+      this.isTitleCardSticky = true;
+      this.setTitleCardContent(title, artist, statusMsg, artUrl, false);
+      if (this.titleCardEl) this.titleCardEl.classList.add("is-visible");
+    }
+    showError(title, artist, errorMsg, artUrl) {
+      this.isTitleCardSticky = true;
+      this.setTitleCardContent(title, artist, errorMsg, artUrl, false);
+      if (this.titleCardEl) this.titleCardEl.classList.add("is-visible");
+    }
     showTitleCard(title, artist, artUrl) {
-      if (!this.titleCardEl) return;
+      this.isTitleCardSticky = false;
+      this.setTitleCardContent(title, artist, "", artUrl, false);
+      if (this.titleCardEl) this.titleCardEl.classList.add("is-visible");
+    }
+    hideTitleCard() {
+      this.isTitleCardSticky = false;
+      if (this.titleCardEl) {
+        this.titleCardEl.classList.remove("is-visible");
+      }
+    }
+    setTitleCardContent(title, artist, status, artUrl, showSpinner = false) {
       const h = document.getElementById("ve-title-heading");
       const a = document.getElementById("ve-title-artist");
+      const s = document.getElementById("ve-title-status");
+      const sp = document.getElementById("ve-title-spinner");
       const img = document.getElementById("ve-title-art");
       if (h) h.textContent = title;
       if (a) a.textContent = artist;
-      if (img && artUrl) img.src = artUrl;
-      this.titleCardEl.classList.add("is-visible");
-    }
-    hideTitleCard() {
-      if (this.titleCardEl) {
-        this.titleCardEl.classList.remove("is-visible");
+      if (s) {
+        s.textContent = status;
+        s.style.display = status ? "block" : "none";
+      }
+      if (sp) {
+        if (showSpinner) sp.classList.add("is-visible");
+        else sp.classList.remove("is-visible");
+      }
+      if (img && artUrl) {
+        img.src = artUrl.startsWith("spotify:image:") ? `https://i.scdn.co/image/${artUrl.replace("spotify:image:", "")}` : artUrl;
+        img.style.display = "block";
+      } else if (img && !artUrl) {
+        img.style.display = "none";
       }
     }
     setInterludeVisible(visible) {
@@ -3308,6 +3363,8 @@ void main() {
     isOpen = false;
     playbarButton = null;
     topbarButton = null;
+    currentLoadRequestId = 0;
+    loadAbortController = null;
     stageView = null;
     animationEngine;
     webgl;
@@ -3468,13 +3525,26 @@ void main() {
       if (typeof Spicetify === "undefined" || !Spicetify.Player?.data?.item) return;
       const trackItem = Spicetify.Player.data.item;
       if (!trackItem?.uri) return;
+      const reqId = ++this.currentLoadRequestId;
+      if (this.loadAbortController) {
+        this.loadAbortController.abort();
+      }
+      this.loadAbortController = new AbortController();
+      const title = trackItem.name || "Unknown Track";
+      const artist = trackItem.artists?.map((a) => a.name).join(", ") || "";
+      const rawArtUrl = trackItem.album?.images?.[0]?.url ?? "";
+      const albumArtUrl = AmbientLight.resolveImageUrl(rawArtUrl);
+      if (this.isOpen && this.stageView) {
+        this.stageView.showLoading(title, artist, albumArtUrl);
+      }
       await this.clock.setTrackUri(trackItem.uri);
+      if (reqId !== this.currentLoadRequestId) return;
       try {
-        const albumArtUrl = trackItem.album?.images?.[0]?.url ?? "";
         const [processedTrack, palette] = await Promise.all([
           this.lyricProvider.getTrackLyrics(trackItem),
           AmbientLight.getPalette(this.currentPaletteType, albumArtUrl)
         ]);
+        if (reqId !== this.currentLoadRequestId) return;
         this.currentTrack = processedTrack;
         if (!this.crossfader) {
           this.crossfader = new PaletteCrossfader(palette);
@@ -3485,11 +3555,23 @@ void main() {
         if (this.webgl) {
           await this.webgl.loadAlbumTexture(albumArtUrl);
         }
+        if (reqId !== this.currentLoadRequestId) return;
         if (this.isOpen && this.stageView) {
-          this.applyTrackToStage(this.stageView, processedTrack, palette);
+          if (!processedTrack.lines || processedTrack.lines.length === 0) {
+            this.stageView.showEmpty(title, artist, "No synced lyrics found", albumArtUrl);
+            this.animationEngine.stop();
+          } else {
+            this.stageView.hideTitleCard();
+            this.applyTrackToStage(this.stageView, processedTrack, palette);
+            this.animationEngine.start();
+          }
         }
       } catch (err) {
+        if (reqId !== this.currentLoadRequestId) return;
         console.error("[VerseEngine] Track load error:", err);
+        if (this.isOpen && this.stageView) {
+          this.stageView.showError(title, artist, "Error loading track lyrics", albumArtUrl);
+        }
       }
     }
     // ── Open / Close / Toggle ──────────────────────────────────────────────────
@@ -3536,28 +3618,37 @@ void main() {
       this.animationEngine.bindStageView(this.stageView);
       if (!this.currentTrack) {
         await this.loadCurrentTrack();
-      }
-      if (this.currentTrack && this.currentPalette) {
+      } else if (this.currentPalette) {
         if (this.currentTrack.albumArtUrl) {
           await this.webgl.loadAlbumTexture(this.currentTrack.albumArtUrl);
         }
         this.webgl.setPalette(this.currentPalette);
-        this.applyTrackToStage(this.stageView, this.currentTrack, this.currentPalette);
-        this.animationEngine.bindElements(
-          rootEl,
-          cameraEl,
-          ambientRimEl,
-          lyricsContainerEl,
-          this.stageView.getCachedLines(),
-          this.currentTrack
-        );
-        requestAnimationFrame(() => {
-          this.animationEngine.measureOffsets();
-        });
-        this.animationEngine.setStyle(this.currentStyle);
-        this.animationEngine.setPalette(this.currentPalette);
-        this.animationEngine.setRimEnabled(this.rimEnabled);
-        this.animationEngine.start();
+        if (!this.currentTrack.lines || this.currentTrack.lines.length === 0) {
+          this.stageView.showEmpty(
+            this.currentTrack.title,
+            this.currentTrack.artist,
+            "No synced lyrics found",
+            this.currentTrack.albumArtUrl
+          );
+        } else {
+          this.stageView.hideTitleCard();
+          this.applyTrackToStage(this.stageView, this.currentTrack, this.currentPalette);
+          this.animationEngine.bindElements(
+            rootEl,
+            cameraEl,
+            ambientRimEl,
+            lyricsContainerEl,
+            this.stageView.getCachedLines(),
+            this.currentTrack
+          );
+          requestAnimationFrame(() => {
+            this.animationEngine.measureOffsets();
+          });
+          this.animationEngine.setStyle(this.currentStyle);
+          this.animationEngine.setPalette(this.currentPalette);
+          this.animationEngine.setRimEnabled(this.rimEnabled);
+          this.animationEngine.start();
+        }
       }
     }
     closeStage() {

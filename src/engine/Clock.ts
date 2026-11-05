@@ -167,13 +167,16 @@ export class Clock {
     // Error between audio time and visual time
     const err = targetAudioMs - this.renderMs;
 
-    if (Math.abs(err) > 150) {
+    if (!this.isPlaying) {
+      // When paused, snap strictly to targetAudioMs (zero pause drift or jitter)
+      this.renderMs = targetAudioMs;
+    } else if (Math.abs(err) > 150) {
       // Real seek occurred (> 150ms jump) -> snap immediately
       this.renderMs = targetAudioMs;
     } else {
       // Slew clock: run in real time and bleed off error smoothly
-      const forwardDelta = this.isPlaying ? dt * 1000 : 0;
-      const slewRate = Math.min(1.0, dt * 8);
+      const forwardDelta = dt * 1000;
+      const slewRate = Math.min(1.0, dt * 6);
       this.renderMs += forwardDelta + err * slewRate;
     }
 
