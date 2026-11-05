@@ -55,6 +55,9 @@ export interface ProcessedTrack {
   durationMs: number;
   lines: LyricLine[];
   sections?: SongSection[];
+  hasLyrics?: boolean;
+  isAd?: boolean;
+  isPodcast?: boolean;
 }
 
 export interface ColorRGB {

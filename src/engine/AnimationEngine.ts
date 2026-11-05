@@ -331,13 +331,20 @@ export class AnimationEngine {
     // 9. Ambient Peripheral Rim Breathing
     this.tickRim(anyVocalActive, dt);
 
-    // 10. Specular Streak Positioning
+    // 10. Specular Streak Positioning (Rare Cinematic Burst: <= once per ~8s)
     if (currentActiveWord && this.webgl && this.currentStyle === 'convex') {
-      const wEl = currentActiveWord.el;
-      const rect = wEl.getBoundingClientRect();
-      const screenX = (rect.left + rect.width * 0.5) / (window.innerWidth || 1920);
-      const screenY = (rect.top + rect.height * 0.5) / (window.innerHeight || 1080);
-      this.webgl.setSpecularStreak(0.75, screenX, screenY);
+      const shouldTrigger =
+        (currentMs - this.lastAccentMs > 8000) &&
+        (currentActiveWord.word.isMelisma || (energy >= 0.75 && beatPulse >= 0.8) || (energy > 0.65 && isDownbeat));
+
+      if (shouldTrigger) {
+        this.lastAccentMs = currentMs;
+        const wEl = currentActiveWord.el;
+        const rect = wEl.getBoundingClientRect();
+        const screenX = (rect.left + rect.width * 0.5) / (window.innerWidth || 1920);
+        const screenY = (rect.top + rect.height * 0.5) / (window.innerHeight || 1080);
+        this.webgl.setSpecularStreak(0.85, screenX, screenY);
+      }
     }
 
     // 11. Synchronous WebGL Render (Unified Loop)

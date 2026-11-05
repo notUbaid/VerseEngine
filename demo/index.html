@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VERSE//ENGINE — Standalone Film Title Sequence Demo Harness</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background: #060506;
+      color: #FAF9F6;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+    #demo-control-bar {
+      position: fixed;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 100002;
+      background: rgba(14, 12, 16, 0.85);
+      backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 9999px;
+      padding: 8px 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      box-shadow: 0 12px 36px rgba(0, 0, 0, 0.6);
+    }
+    .demo-btn {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      color: #FAF9F6;
+      padding: 6px 12px;
+      border-radius: 9999px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .demo-btn:hover {
+      background: rgba(255, 255, 255, 0.18);
+    }
+    .demo-btn.active {
+      background: #E03E52;
+      border-color: #E03E52;
+      color: white;
+    }
+    .demo-slider {
+      width: 140px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <div id="demo-control-bar">
+    <span style="font-size: 11px; font-weight: 700; letter-spacing: 0.05em; color: #E03E52;">VERSE//ENGINE DEMO</span>
+    <button class="demo-btn active" id="btn-track-1">1. Solar Eclipse (Hip-Hop)</button>
+    <button class="demo-btn" id="btn-track-2">2. मेरा प्यार (Hindi / Devanagari)</button>
+    <button class="demo-btn" id="btn-track-3">3. 夜空の星 (Japanese / CJK)</button>
+    <button class="demo-btn" id="btn-playpause">▶ Play</button>
+    <input type="range" id="demo-seek" class="demo-slider" min="0" max="180000" value="0">
+    <span id="demo-time" style="font-size: 11px; opacity: 0.7; min-width: 45px;">00:00</span>
+    <button class="demo-btn" id="btn-hud">Shift+D: HUD</button>
+  </div>
+
+  <script>
+    // ── Standalone Mock Spicetify Environment ──────────────────────────────────
+    const DEMO_TRACKS = [
+      {
+        uri: 'spotify:track:demo_solar_eclipse',
+        name: 'Solar Eclipse',
+        artists: [{ uri: 'spotify:artist:drake', name: 'Drake & Don Toliver' }],
+        album: {
+          name: 'For All The Dogs',
+          images: [{ url: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=600&auto=format&fit=crop&q=80' }]
+        },
+        duration: { milliseconds: 184000 },
+        lrc: `
+[00:02.00]Yeah, she from Texas, I can tell by the way she talk
+[00:06.50]She down to take a hundred shots with me (yeah)
+[00:11.20]Solar eclipse in the morning sun
+[00:15.80]Heartbeat racing through the midnight air
+[00:20.40]Falling through the heavy smoke and fading lights
+[00:25.00]Shattered dreams on the marble floor
+[00:29.60]She want the fame, she want the night
+[00:34.20]And I want you, yes I want you
+[00:39.00]Echoes of our voices in the empty hall
+[00:44.00]And we burn until the morning comes
+`
+      },
+      {
+        uri: 'spotify:track:demo_hindi_devanagari',
+        name: 'मेरा प्यार (Mera Pyaar)',
+        artists: [{ uri: 'spotify:artist:arijit', name: 'Arijit Singh & Pritam' }],
+        album: {
+          name: 'रंगून (Rangoon)',
+          images: [{ url: 'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=600&auto=format&fit=crop&q=80' }]
+        },
+        duration: { milliseconds: 210000 },
+        lrc: `
+[00:02.50]मेरा प्यार सच्चा है तेरे लिए
+[00:07.80]नित नवी था नवी नवी बोज़ (हाँ)
+[00:12.50]दिल की धड़कन में तू ही तू बसा
+[00:18.00]रात का समां और सितारों का पहरा
+[00:23.50]बहती हवाओं में तेरी ही खुशबू
+[00:29.00]हम दोनों का यह अटूट सफर
+[00:35.00]रौशनी की तरह चमकता हुआ तेरा नूर
+`
+      },
+      {
+        uri: 'spotify:track:demo_japanese_cjk',
+        name: '夜空の星 (Yozora no Hoshi)',
+        artists: [{ uri: 'spotify:artist:aimer', name: 'Aimer & Vaundy' }],
+        album: {
+          name: '星の降る夜に',
+          images: [{ url: 'https://images.unsplash.com/photo-1509198397868-475647b2a1e5?w=600&auto=format&fit=crop&q=80' }]
+        },
+        duration: { milliseconds: 195000 },
+        lrc: `
+[00:03.00]夜空に輝く星を見上げて
+[00:08.20]静かな夜に響く足音 (そう)
+[00:13.50]風が囁く君の名前を
+[00:19.00]光の中で踊る影
+[00:24.50]心臓の鼓動が熱く高鳴る
+[00:30.00]永遠に続くこの物語
+`
+      }
+    ];
+
+    let currentTrackIdx = 0;
+    let isPlaying = false;
+    let mockProgressMs = 0;
+    let lastTick = performance.now();
+    const eventListeners = {};
+
+    window.Spicetify = {
+      Player: {
+        data: {
+          item: DEMO_TRACKS[0],
+          is_playing: false,
+          progress: 0
+        },
+        getProgress: () => mockProgressMs,
+        getDuration: () => DEMO_TRACKS[currentTrackIdx].duration.milliseconds,
+        isPlaying: () => isPlaying,
+        play: () => {
+          isPlaying = true;
+          window.Spicetify.Player.data.is_playing = true;
+          (eventListeners['onplaypause'] || []).forEach(cb => cb());
+        },
+        pause: () => {
+          isPlaying = false;
+          window.Spicetify.Player.data.is_playing = false;
+          (eventListeners['onplaypause'] || []).forEach(cb => cb());
+        },
+        togglePlay: () => {
+          if (isPlaying) window.Spicetify.Player.pause();
+          else window.Spicetify.Player.play();
+        },
+        seek: (ms) => {
+          mockProgressMs = Math.max(0, Math.min(ms, DEMO_TRACKS[currentTrackIdx].duration.milliseconds));
+          window.Spicetify.Player.data.progress = mockProgressMs;
+          (eventListeners['onprogress'] || []).forEach(cb => cb());
+        },
+        addEventListener: (event, cb) => {
+          if (!eventListeners[event]) eventListeners[event] = [];
+          eventListeners[event].push(cb);
+        },
+        removeEventListener: (event, cb) => {
+          if (eventListeners[event]) {
+            eventListeners[event] = eventListeners[event].filter(x => x !== cb);
+          }
+        }
+      },
+      Playbar: {
+        Button: class {
+          constructor(label, icon, onClick) {
+            this.label = label;
+            this.icon = icon;
+            this.onClick = onClick;
+          }
+          register() {}
+        }
+      },
+      showNotification: (msg) => console.log('[Spicetify Notice]', msg)
+    };
+
+    // Pre-populate LRCLIB mock
+    window.fetch = async (url) => {
+      const cur = DEMO_TRACKS[currentTrackIdx];
+      return {
+        ok: true,
+        json: async () => ({
+          trackName: cur.name,
+          artistName: cur.artists[0].name,
+          duration: cur.duration.milliseconds / 1000,
+          syncedLyrics: cur.lrc
+        })
+      };
+    };
+
+    // Simulation loop for mock audio playback
+    function simulatePlayback() {
+      const now = performance.now();
+      const dt = (now - lastTick) / 1000;
+      lastTick = now;
+
+      if (isPlaying) {
+        mockProgressMs += dt * 1000;
+        const total = DEMO_TRACKS[currentTrackIdx].duration.milliseconds;
+        if (mockProgressMs > total) mockProgressMs = 0;
+        window.Spicetify.Player.data.progress = mockProgressMs;
+
+        document.getElementById('demo-seek').value = mockProgressMs;
+        const s = Math.floor(mockProgressMs / 1000);
+        const mins = Math.floor(s / 60).toString().padStart(2, '0');
+        const secs = (s % 60).toString().padStart(2, '0');
+        document.getElementById('demo-time').textContent = `${mins}:${secs}`;
+      }
+
+      requestAnimationFrame(simulatePlayback);
+    }
+    requestAnimationFrame(simulatePlayback);
+
+    // UI Buttons
+    function selectTrack(idx) {
+      currentTrackIdx = idx;
+      mockProgressMs = 0;
+      const track = DEMO_TRACKS[idx];
+      window.Spicetify.Player.data.item = track;
+      document.getElementById('demo-seek').max = track.duration.milliseconds;
+      document.querySelectorAll('#demo-control-bar .demo-btn').forEach((b, i) => {
+        if (i < 3) b.classList.toggle('active', i === idx);
+      });
+      (eventListeners['songchange'] || []).forEach(cb => cb());
+    }
+
+    document.getElementById('btn-track-1').onclick = () => selectTrack(0);
+    document.getElementById('btn-track-2').onclick = () => selectTrack(1);
+    document.getElementById('btn-track-3').onclick = () => selectTrack(2);
+
+    const playBtn = document.getElementById('btn-playpause');
+    playBtn.onclick = () => {
+      window.Spicetify.Player.togglePlay();
+      playBtn.textContent = isPlaying ? '⏸ Pause' : '▶ Play';
+    };
+
+    document.getElementById('demo-seek').oninput = (e) => {
+      window.Spicetify.Player.seek(parseFloat(e.target.value));
+    };
+
+    document.getElementById('btn-hud').onclick = () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'D', shiftKey: true }));
+    };
+  </script>
+
+  <!-- Load VerseEngine production bundle -->
+  <script src="../dist/verse-engine.js"></script>
+
+  <script>
+    // Automatically trigger fullscreen stage after boot
+    window.addEventListener('load', () => {
+      setTimeout(() => {
+        if (window.VerseEngine) {
+          window.VerseEngine.openStage();
+          window.Spicetify.Player.play();
+          playBtn.textContent = '⏸ Pause';
+        }
+      }, 500);
+    });
+  </script>
+</body>
+</html>

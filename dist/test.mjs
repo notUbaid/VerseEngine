@@ -366,12 +366,36 @@ var LyricProvider = class _LyricProvider {
       this.wordSegmenter = new Intl.Segmenter(void 0, { granularity: "word" });
       this.graphemeSegmenter = new Intl.Segmenter(void 0, { granularity: "grapheme" });
     }
+    this.loadPersistentCache();
   }
   static getInstance() {
     if (!_LyricProvider.instance) {
       _LyricProvider.instance = new _LyricProvider();
     }
     return _LyricProvider.instance;
+  }
+  loadPersistentCache() {
+    try {
+      const serialized = localStorage.getItem("verse_engine_lyrics_cache_v2");
+      if (serialized) {
+        const parsed = JSON.parse(serialized);
+        if (Array.isArray(parsed)) {
+          for (const item of parsed) {
+            if (item && item.uri && Array.isArray(item.lines)) {
+              this.cache.set(item.uri, item);
+            }
+          }
+        }
+      }
+    } catch {
+    }
+  }
+  savePersistentCache() {
+    try {
+      const items = Array.from(this.cache.values()).slice(-40);
+      localStorage.setItem("verse_engine_lyrics_cache_v2", JSON.stringify(items));
+    } catch {
+    }
   }
   /**
    * Helper to convert spotify:image:<id> to https://i.scdn.co/image/<id>
@@ -382,6 +406,16 @@ var LyricProvider = class _LyricProvider {
       return `https://i.scdn.co/image/${url.replace("spotify:image:", "")}`;
     }
     return url;
+  }
+  isAdOrPodcast(track) {
+    const uri = track.uri || "";
+    if (uri.includes(":episode:") || uri.includes(":show:") || uri.includes(":ad:")) {
+      return true;
+    }
+    if (track.metadata?.is_advertisement === "true" || track.is_ad === true) {
+      return true;
+    }
+    return false;
   }
   async getTrackLyrics(track) {
     const uri = track.uri;
@@ -396,6 +430,22 @@ var LyricProvider = class _LyricProvider {
     const albumArtUrl = _LyricProvider.resolveImageUrl(rawArt);
     const durationMs = track.duration?.milliseconds || 18e4;
     const trackId = this.getTrackId(uri);
+    if (this.isAdOrPodcast(track)) {
+      const isPodcast = uri.includes(":episode:");
+      const processed2 = {
+        uri,
+        title: isPodcast ? title : "Advertisement",
+        artist: isPodcast ? artist : "Spotify Sponsor",
+        album,
+        albumArtUrl,
+        durationMs,
+        lines: [],
+        hasLyrics: false,
+        isAd: !isPodcast,
+        isPodcast
+      };
+      return processed2;
+    }
     let rawLines = null;
     let wordSyncedLines = null;
     try {
@@ -424,14 +474,14 @@ var LyricProvider = class _LyricProvider {
       throw new Error("Superseded by newer track request");
     }
     let lines = [];
-    let isFallback = false;
+    let hasLyrics = true;
     if (wordSyncedLines && wordSyncedLines.length > 0) {
       lines = wordSyncedLines;
     } else if (rawLines && rawLines.length > 0) {
       lines = this.synthesizeLines(rawLines);
     } else {
-      isFallback = true;
-      lines = this.generateFallbackLines(title, artist, durationMs);
+      hasLyrics = false;
+      lines = [];
     }
     const processed = {
       uri,
@@ -440,10 +490,12 @@ var LyricProvider = class _LyricProvider {
       album,
       albumArtUrl,
       durationMs,
-      lines
+      lines,
+      hasLyrics
     };
-    if (!isFallback && lines.length > 0) {
+    if (hasLyrics && lines.length > 0) {
       this.cache.set(uri, processed);
+      this.savePersistentCache();
     }
     return processed;
   }
@@ -468,27 +520,45 @@ var LyricProvider = class _LyricProvider {
     return null;
   }
   async fetchLrclib(title, artist, album, durationMs) {
+    const cleanTitle = title.replace(/\s*-\s*.*$/, "").replace(/\(feat\..*?\)/i, "").trim();
     const durationSec = Math.round(durationMs / 1e3);
-    const getUrl = `https://lrclib.net/api/get?track_name=${encodeURIComponent(title)}&artist_name=${encodeURIComponent(artist)}&album_name=${encodeURIComponent(album)}&duration=${durationSec}`;
+    const getUrl = `https://lrclib.net/api/get?track_name=${encodeURIComponent(cleanTitle)}&artist_name=${encodeURIComponent(artist)}&duration=${durationSec}`;
     try {
-      const headers = { "Lrclib-Client": "VerseEngine/2.0.0 (Spicetify Extension)" };
-      let res = await fetch(getUrl, { headers });
-      let data = null;
+      const res = await fetch(getUrl, {
+        headers: { "Lrclib-Client": "VerseEngine-Spicetify v2.0.0 (https://github.com/notUbaid/VerseEngine)" }
+      });
       if (res.ok) {
-        data = await res.json();
-      } else {
-        const searchUrl = `https://lrclib.net/api/search?track_name=${encodeURIComponent(title)}&artist_name=${encodeURIComponent(artist)}`;
-        const searchRes = await fetch(searchUrl, { headers });
-        if (searchRes.ok) {
-          const results = await searchRes.json();
-          if (Array.isArray(results) && results.length > 0) {
-            data = results.find(
-              (r) => r.syncedLyrics && Math.abs((r.duration || durationSec) - durationSec) <= 4
-            ) || results[0];
+        const data = await res.json();
+        if (data.syncedLyrics) {
+          const parsed = this.parseLrclibResponse(data);
+          if (parsed) return parsed;
+        }
+      }
+    } catch {
+    }
+    const searchUrl = `https://lrclib.net/api/search?track_name=${encodeURIComponent(cleanTitle)}&artist_name=${encodeURIComponent(artist)}`;
+    try {
+      const res = await fetch(searchUrl, {
+        headers: { "Lrclib-Client": "VerseEngine-Spicetify v2.0.0 (https://github.com/notUbaid/VerseEngine)" }
+      });
+      if (res.ok) {
+        const results = await res.json();
+        if (Array.isArray(results) && results.length > 0) {
+          const match = results.find(
+            (r) => r.syncedLyrics && Math.abs(r.duration - durationSec) <= 4
+          );
+          if (match) {
+            return this.parseLrclibResponse(match);
           }
         }
       }
-      if (!data || !data.syncedLyrics) return null;
+    } catch {
+    }
+    return null;
+  }
+  parseLrclibResponse(data) {
+    try {
+      if (!data.syncedLyrics) return null;
       const text = data.syncedLyrics;
       if (text.includes("<") && text.includes(">")) {
         const wordLines = this.parseEnhancedLrc(text);
@@ -601,8 +671,7 @@ var LyricProvider = class _LyricProvider {
     return lines;
   }
   /**
-   * The Phonetic Word & Letter Timing Synthesizer
-   * Segments international text (Devanagari, CJK, Latin) and applies vowel weighting
+   * Phonetic Word & Letter Timing Synthesizer
    */
   synthesizeLines(rawLines) {
     const lines = [];
@@ -682,11 +751,6 @@ var LyricProvider = class _LyricProvider {
     }
     return lines;
   }
-  /**
-   * Tokenize words: Preserves parenthesized ad-libs (e.g. "(yeah)"),
-   * supports space-separated languages (Latin, Indic, Cyrillic, etc.),
-   * and segments un-spaced CJK scripts using Intl.Segmenter.
-   */
   tokenizeWords(text) {
     const trimmed = text.trim();
     if (!trimmed) return [];
@@ -710,9 +774,6 @@ var LyricProvider = class _LyricProvider {
     }
     return [trimmed];
   }
-  /**
-   * Split string into grapheme clusters preserving complex conjuncts (e.g. Hindi प्यार -> [प्या, र])
-   */
   splitGraphemes(str) {
     if (this.graphemeSegmenter) {
       return [...this.graphemeSegmenter.segment(str)].map((s) => s.segment);
@@ -737,53 +798,6 @@ var LyricProvider = class _LyricProvider {
       cursor += dur;
       return charObj;
     });
-  }
-  generateFallbackLines(title, artist, durationMs) {
-    const midPoint = Math.floor(durationMs * 0.45);
-    return [
-      {
-        id: "inst_1",
-        index: 0,
-        startMs: 0,
-        endMs: midPoint,
-        words: [
-          {
-            id: "iw_1",
-            text: title || "Instrumental",
-            cleanText: sanitizeWord(title) || "instrumental",
-            startMs: 0,
-            endMs: midPoint,
-            durationMs: midPoint,
-            isMelisma: false,
-            isAdLib: false,
-            semanticEffect: "NONE",
-            chars: []
-          }
-        ],
-        adLibs: []
-      },
-      {
-        id: "inst_2",
-        index: 1,
-        startMs: midPoint,
-        endMs: durationMs,
-        words: [
-          {
-            id: "iw_2",
-            text: artist || "Enjoy the music",
-            cleanText: sanitizeWord(artist) || "enjoy the music",
-            startMs: midPoint,
-            endMs: durationMs,
-            durationMs: durationMs - midPoint,
-            isMelisma: false,
-            isAdLib: false,
-            semanticEffect: "NONE",
-            chars: []
-          }
-        ],
-        adLibs: []
-      }
-    ];
   }
 };
 

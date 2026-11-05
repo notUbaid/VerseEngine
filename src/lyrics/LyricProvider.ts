@@ -36,6 +36,7 @@ export class LyricProvider {
       this.wordSegmenter = new Intl.Segmenter(undefined, { granularity: 'word' });
       this.graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
     }
+    this.loadPersistentCache();
   }
 
   public static getInstance(): LyricProvider {
@@ -43,6 +44,29 @@ export class LyricProvider {
       LyricProvider.instance = new LyricProvider();
     }
     return LyricProvider.instance;
+  }
+
+  private loadPersistentCache(): void {
+    try {
+      const serialized = localStorage.getItem('verse_engine_lyrics_cache_v2');
+      if (serialized) {
+        const parsed = JSON.parse(serialized);
+        if (Array.isArray(parsed)) {
+          for (const item of parsed) {
+            if (item && item.uri && Array.isArray(item.lines)) {
+              this.cache.set(item.uri, item);
+            }
+          }
+        }
+      }
+    } catch {}
+  }
+
+  private savePersistentCache(): void {
+    try {
+      const items = Array.from(this.cache.values()).slice(-40); // Keep latest 40 tracks in durable cache
+      localStorage.setItem('verse_engine_lyrics_cache_v2', JSON.stringify(items));
+    } catch {}
   }
 
   /**
@@ -54,6 +78,17 @@ export class LyricProvider {
       return `https://i.scdn.co/image/${url.replace('spotify:image:', '')}`;
     }
     return url;
+  }
+
+  public isAdOrPodcast(track: Spicetify.PlayerTrack): boolean {
+    const uri = track.uri || '';
+    if (uri.includes(':episode:') || uri.includes(':show:') || uri.includes(':ad:')) {
+      return true;
+    }
+    if ((track as any).metadata?.is_advertisement === 'true' || (track as any).is_ad === true) {
+      return true;
+    }
+    return false;
   }
 
   public async getTrackLyrics(track: Spicetify.PlayerTrack): Promise<ProcessedTrack> {
@@ -70,6 +105,24 @@ export class LyricProvider {
     const albumArtUrl = LyricProvider.resolveImageUrl(rawArt);
     const durationMs = track.duration?.milliseconds || 180000;
     const trackId = this.getTrackId(uri);
+
+    // Handle Advertisements & Podcasts cleanly
+    if (this.isAdOrPodcast(track)) {
+      const isPodcast = uri.includes(':episode:');
+      const processed: ProcessedTrack = {
+        uri,
+        title: isPodcast ? title : 'Advertisement',
+        artist: isPodcast ? artist : 'Spotify Sponsor',
+        album,
+        albumArtUrl,
+        durationMs,
+        lines: [],
+        hasLyrics: false,
+        isAd: !isPodcast,
+        isPodcast
+      };
+      return processed;
+    }
 
     let rawLines: Array<{ timeMs: number; text: string }> | null = null;
     let wordSyncedLines: LyricLine[] | null = null;
@@ -107,15 +160,15 @@ export class LyricProvider {
 
     // 3. Synthesize full AST
     let lines: LyricLine[] = [];
-    let isFallback = false;
+    let hasLyrics = true;
 
     if (wordSyncedLines && wordSyncedLines.length > 0) {
       lines = wordSyncedLines;
     } else if (rawLines && rawLines.length > 0) {
       lines = this.synthesizeLines(rawLines);
     } else {
-      isFallback = true;
-      lines = this.generateFallbackLines(title, artist, durationMs);
+      hasLyrics = false;
+      lines = []; // No artificial text; title card handles instrumental tracks gracefully
     }
 
     const processed: ProcessedTrack = {
@@ -125,12 +178,14 @@ export class LyricProvider {
       album,
       albumArtUrl,
       durationMs,
-      lines
+      lines,
+      hasLyrics
     };
 
-    // Only cache genuine lyrics, never poison cache with network failures or empty fallbacks
-    if (!isFallback && lines.length > 0) {
+    // Cache genuine tracks with lyrics
+    if (hasLyrics && lines.length > 0) {
       this.cache.set(uri, processed);
+      this.savePersistentCache();
     }
 
     return processed;
@@ -147,7 +202,6 @@ export class LyricProvider {
     const url = `https://spclient.wg.spotify.com/color-lyrics/v2/track/${trackId}?format=json&vocalRemoval=false&market=from_token`;
     const res = await Spicetify.CosmosAsync.get(url);
 
-    // Verify lyrics exist and are actually synced (avoid landing all unsynced lines at 0ms)
     if (res?.lyrics?.lines && Array.isArray(res.lyrics.lines)) {
       if (res.lyrics.syncType === 'UNSYNCED') {
         console.log('[VerseEngine] Spotify lyrics are UNSYNCED, deferring to LRCLIB');
@@ -170,33 +224,57 @@ export class LyricProvider {
     artist: string,
     album: string,
     durationMs: number
-  ): Promise<{ wordLines?: LyricLine[]; lineLyrics?: Array<{ timeMs: number; text: string }> } | null> {
+  ): Promise<{ lineLyrics?: Array<{ timeMs: number; text: string }>; wordLines?: LyricLine[] } | null> {
+    const cleanTitle = title.replace(/\s*-\s*.*$/, '').replace(/\(feat\..*?\)/i, '').trim();
     const durationSec = Math.round(durationMs / 1000);
-    const getUrl = `https://lrclib.net/api/get?track_name=${encodeURIComponent(title)}&artist_name=${encodeURIComponent(artist)}&album_name=${encodeURIComponent(album)}&duration=${durationSec}`;
+
+    const getUrl = `https://lrclib.net/api/get?track_name=${encodeURIComponent(cleanTitle)}&artist_name=${encodeURIComponent(artist)}&duration=${durationSec}`;
 
     try {
-      const headers = { 'Lrclib-Client': 'VerseEngine/2.0.0 (Spicetify Extension)' };
-      let res = await fetch(getUrl, { headers });
+      const res = await fetch(getUrl, {
+        headers: { 'Lrclib-Client': 'VerseEngine-Spicetify v2.0.0 (https://github.com/notUbaid/VerseEngine)' }
+      });
 
-      let data: any = null;
       if (res.ok) {
-        data = await res.json();
-      } else {
-        // Fallback to /api/search with duration check
-        const searchUrl = `https://lrclib.net/api/search?track_name=${encodeURIComponent(title)}&artist_name=${encodeURIComponent(artist)}`;
-        const searchRes = await fetch(searchUrl, { headers });
-        if (searchRes.ok) {
-          const results = await searchRes.json();
-          if (Array.isArray(results) && results.length > 0) {
-            // Find best matching track with syncedLyrics and duration within +/- 4s
-            data = results.find(
-              (r: any) => r.syncedLyrics && Math.abs((r.duration || durationSec) - durationSec) <= 4
-            ) || results[0];
+        const data = await res.json();
+        if (data.syncedLyrics) {
+          const parsed = this.parseLrclibResponse(data);
+          if (parsed) return parsed;
+        }
+      }
+    } catch {
+      // Fall through to search endpoint
+    }
+
+    // Fallback: Search endpoint with duration tolerance check (+/- 4s)
+    const searchUrl = `https://lrclib.net/api/search?track_name=${encodeURIComponent(cleanTitle)}&artist_name=${encodeURIComponent(artist)}`;
+
+    try {
+      const res = await fetch(searchUrl, {
+        headers: { 'Lrclib-Client': 'VerseEngine-Spicetify v2.0.0 (https://github.com/notUbaid/VerseEngine)' }
+      });
+
+      if (res.ok) {
+        const results = await res.json();
+        if (Array.isArray(results) && results.length > 0) {
+          const match = results.find(
+            (r: any) => r.syncedLyrics && Math.abs(r.duration - durationSec) <= 4
+          );
+          if (match) {
+            return this.parseLrclibResponse(match);
           }
         }
       }
+    } catch {
+      // LRCLIB search unavailable
+    }
 
-      if (!data || !data.syncedLyrics) return null;
+    return null;
+  }
+
+  private parseLrclibResponse(data: any): { lineLyrics?: Array<{ timeMs: number; text: string }>; wordLines?: LyricLine[] } | null {
+    try {
+      if (!data.syncedLyrics) return null;
 
       const text: string = data.syncedLyrics;
       if (text.includes('<') && text.includes('>')) {
@@ -207,7 +285,7 @@ export class LyricProvider {
       const lineLyrics = this.parseStandardLrc(text);
       if (lineLyrics.length > 0) return { lineLyrics };
     } catch {
-      // LRCLIB unavailable
+      // LRCLIB parse failed
     }
 
     return null;
@@ -300,7 +378,6 @@ export class LyricProvider {
       for (let w = 0; w < rawTokens.length; w++) {
         const cur = rawTokens[w];
         const next = w < rawTokens.length - 1 ? rawTokens[w + 1] : null;
-        // Accurate duration: next start minus this start (not gap before word!)
         const wDuration = next
           ? Math.max(80, next.startMs - cur.startMs)
           : Math.max(80, lineEndMs - cur.startMs);
@@ -340,8 +417,7 @@ export class LyricProvider {
   }
 
   /**
-   * The Phonetic Word & Letter Timing Synthesizer
-   * Segments international text (Devanagari, CJK, Latin) and applies vowel weighting
+   * Phonetic Word & Letter Timing Synthesizer
    */
   public synthesizeLines(rawLines: Array<{ timeMs: number; text: string }>): LyricLine[] {
     const lines: LyricLine[] = [];
@@ -352,7 +428,6 @@ export class LyricProvider {
       const text = cur.text.trim();
       const charCount = text.length;
 
-      // Safe vocal window budgeting (never negative!)
       const timeToNext = next ? next.timeMs - cur.timeMs : 3000;
       const vocalDuration = Math.max(
         400,
@@ -364,14 +439,12 @@ export class LyricProvider {
       const lineStartMs = cur.timeMs;
       const lineEndMs = lineStartMs + vocalDuration;
 
-      // Tokenize words using Intl.Segmenter or regex fallback
       const rawTokens = this.tokenizeWords(text);
       if (rawTokens.length === 0) continue;
 
       const words: LyricWord[] = [];
       let semanticCountInLine = 0;
 
-      // Phonetic duration weights
       const weights = rawTokens.map(token => {
         const graphemes = this.splitGraphemes(token);
         let weight = 0;
@@ -400,10 +473,8 @@ export class LyricProvider {
         const wDuration = wEnd - wStart;
 
         const clean = sanitizeWord(token);
-        // Only parenthesized expressions are ad-libs (never plain words like "yeah" or "hey")
         const isAdLib = /^\(.*\)$|^\[.*\]$/.test(token.trim());
 
-        // Cap semantic effects to at most 1-2 per line to prevent visual clutter
         let semanticEffect: SemanticEffect = 'NONE';
         if (semanticCountInLine < 1) {
           semanticEffect = matchSemanticEffect(token);
@@ -444,18 +515,12 @@ export class LyricProvider {
     return lines;
   }
 
-  /**
-   * Tokenize words: Preserves parenthesized ad-libs (e.g. "(yeah)"),
-   * supports space-separated languages (Latin, Indic, Cyrillic, etc.),
-   * and segments un-spaced CJK scripts using Intl.Segmenter.
-   */
   private tokenizeWords(text: string): string[] {
     const trimmed = text.trim();
     if (!trimmed) return [];
 
     const CJK_REGEX = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u;
 
-    // If text contains whitespace, split by whitespace and only segment CJK sub-tokens
     if (/\s+/.test(trimmed)) {
       const tokens = trimmed.split(/\s+/).filter(Boolean);
       const result: string[] = [];
@@ -472,7 +537,6 @@ export class LyricProvider {
       return result;
     }
 
-    // Text has no whitespace (e.g. unspaced CJK sentence)
     if (CJK_REGEX.test(trimmed) && this.wordSegmenter) {
       const segments = [...this.wordSegmenter.segment(trimmed)]
         .map(s => s.segment.trim())
@@ -483,9 +547,6 @@ export class LyricProvider {
     return [trimmed];
   }
 
-  /**
-   * Split string into grapheme clusters preserving complex conjuncts (e.g. Hindi प्यार -> [प्या, र])
-   */
   private splitGraphemes(str: string): string[] {
     if (this.graphemeSegmenter) {
       return [...this.graphemeSegmenter.segment(str)].map(s => s.segment);
@@ -513,53 +574,5 @@ export class LyricProvider {
       cursor += dur;
       return charObj;
     });
-  }
-
-  private generateFallbackLines(title: string, artist: string, durationMs: number): LyricLine[] {
-    const midPoint = Math.floor(durationMs * 0.45);
-    return [
-      {
-        id: 'inst_1',
-        index: 0,
-        startMs: 0,
-        endMs: midPoint,
-        words: [
-          {
-            id: 'iw_1',
-            text: title || 'Instrumental',
-            cleanText: sanitizeWord(title) || 'instrumental',
-            startMs: 0,
-            endMs: midPoint,
-            durationMs: midPoint,
-            isMelisma: false,
-            isAdLib: false,
-            semanticEffect: 'NONE',
-            chars: []
-          }
-        ],
-        adLibs: []
-      },
-      {
-        id: 'inst_2',
-        index: 1,
-        startMs: midPoint,
-        endMs: durationMs,
-        words: [
-          {
-            id: 'iw_2',
-            text: artist || 'Enjoy the music',
-            cleanText: sanitizeWord(artist) || 'enjoy the music',
-            startMs: midPoint,
-            endMs: durationMs,
-            durationMs: durationMs - midPoint,
-            isMelisma: false,
-            isAdLib: false,
-            semanticEffect: 'NONE',
-            chars: []
-          }
-        ],
-        adLibs: []
-      }
-    ];
   }
 }

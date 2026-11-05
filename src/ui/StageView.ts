@@ -113,7 +113,7 @@ export class StageView {
           height: 100vh;
           overflow: hidden;
           background-color: var(--ve-bg, #0A0808);
-          font-family: 'Bricolage Grotesque', 'Plus Jakarta Sans', 'Inter Tight', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+          font-family: 'Bricolage Grotesque', 'Plus Jakarta Sans', 'Inter Tight', 'Nirmala UI', 'Meiryo', 'Hiragino Sans', 'Yu Gothic', 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
           font-feature-settings: "kern" 1, "liga" 1;
           -webkit-font-smoothing: antialiased;
           -moz-osx-font-smoothing: grayscale;

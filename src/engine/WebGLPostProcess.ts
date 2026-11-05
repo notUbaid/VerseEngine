@@ -64,47 +64,64 @@ float hash(vec2 p) {
   return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
 }
 
+// 9-Tap Gaussian Atmosphere Sampler (Eliminates high-frequency noise & tile borders)
+vec3 sampleAtmosphere(sampler2D tex, vec2 uv) {
+  vec3 col = texture(tex, uv).rgb * 0.28;
+  col += texture(tex, uv + vec2(0.045, 0.0)).rgb * 0.12;
+  col += texture(tex, uv - vec2(0.045, 0.0)).rgb * 0.12;
+  col += texture(tex, uv + vec2(0.0, 0.045)).rgb * 0.12;
+  col += texture(tex, uv - vec2(0.0, 0.045)).rgb * 0.12;
+  col += texture(tex, uv + vec2(0.032, 0.032)).rgb * 0.06;
+  col += texture(tex, uv - vec2(0.032, 0.032)).rgb * 0.06;
+  col += texture(tex, uv + vec2(-0.032, 0.032)).rgb * 0.06;
+  col += texture(tex, uv + vec2(0.032, -0.032)).rgb * 0.06;
+  return col;
+}
+
 void main() {
   vec2 uv = v_uv;
   vec2 center = uv - vec2(0.5);
   float distToCenter = length(center);
 
   // 1. Edge-only chromatic aberration (spiking on chorus slam)
-  float caAmount = (0.0018 + u_chromaticSpike * 0.008) * pow(distToCenter * 1.5, 2.2);
+  float caAmount = (0.0016 + u_chromaticSpike * 0.007) * pow(distToCenter * 1.5, 2.2);
   vec2 caDir = distToCenter > 0.001 ? normalize(center) * caAmount : vec2(0.0);
 
-  // 2. 3-Scale dynamic rotating album art atmosphere
-  float t = u_time * 0.12;
+  // 2. 3-Scale dynamic rotating album art atmosphere (Deep-zoom ensures zero visible borders)
+  float t = u_time * 0.10;
+  float aspect = u_resolution.x / max(1.0, u_resolution.y);
+  vec2 cAspect = vec2(center.x * (aspect > 1.0 ? 1.0 : aspect), center.y * (aspect > 1.0 ? 1.0 / aspect : 1.0));
 
-  // Scale 1: 1.1x slow sway
-  vec2 uv1 = uv + vec2(sin(t * 0.6) * 0.06, cos(t * 0.4) * 0.05);
-  uv1 = (uv1 - 0.5) * 0.85 + 0.5;
+  // Scale 1: 0.48 deep zoom with organic sway
+  vec2 uv1 = cAspect * 0.48 + vec2(0.5) + vec2(sin(t * 0.35) * 0.035, cos(t * 0.28) * 0.035);
 
-  // Scale 2: 1.8x slow rotation
-  float ang2 = t * 0.25;
+  // Scale 2: 0.40 zoom with slow cinematic rotation
+  float ang2 = t * 0.14;
   mat2 rot2 = mat2(cos(ang2), -sin(ang2), sin(ang2), cos(ang2));
-  vec2 uv2 = rot2 * (uv - 0.5) * 1.6 + 0.5;
+  vec2 uv2 = (rot2 * cAspect) * 0.40 + vec2(0.5);
 
-  // Scale 3: 2.6x translation
-  vec2 uv3 = (uv - 0.5) * 2.4 + 0.5 + vec2(cos(t * 0.35) * 0.08, sin(t * 0.5) * 0.08);
+  // Scale 3: 0.34 zoom with counter-rotation and breathing
+  float ang3 = -t * 0.09;
+  mat2 rot3 = mat2(cos(ang3), -sin(ang3), sin(ang3), cos(ang3));
+  vec2 uv3 = (rot3 * cAspect) * 0.34 + vec2(0.5) + vec2(cos(t * 0.22) * 0.025, sin(t * 0.30) * 0.025);
 
   vec3 texSample = vec3(0.0);
 
   if (u_hasArt > 0.5) {
-    // Current artwork with chromatic separation
+    // Current artwork with multi-tap atmospheric diffusion
     vec3 c1 = vec3(
-      texture(u_artTexture, uv1 + caDir).r,
-      texture(u_artTexture, uv1).g,
-      texture(u_artTexture, uv1 - caDir).b
+      sampleAtmosphere(u_artTexture, uv1 + caDir).r,
+      sampleAtmosphere(u_artTexture, uv1).g,
+      sampleAtmosphere(u_artTexture, uv1 - caDir).b
     );
-    vec3 c2 = texture(u_artTexture, uv2).rgb;
-    vec3 c3 = texture(u_artTexture, uv3).rgb;
+    vec3 c2 = sampleAtmosphere(u_artTexture, uv2);
+    vec3 c3 = sampleAtmosphere(u_artTexture, uv3);
     vec3 artBlended = c1 * 0.45 + c2 * 0.35 + c3 * 0.20;
 
     // Previous artwork for smooth crossfade
     if (u_artCrossfade < 1.0) {
-      vec3 p1 = texture(u_prevArtTexture, uv1).rgb;
-      vec3 p2 = texture(u_prevArtTexture, uv2).rgb;
+      vec3 p1 = sampleAtmosphere(u_prevArtTexture, uv1);
+      vec3 p2 = sampleAtmosphere(u_prevArtTexture, uv2);
       vec3 prevBlended = p1 * 0.55 + p2 * 0.45;
       artBlended = mix(prevBlended, artBlended, u_artCrossfade);
     }
@@ -119,21 +136,21 @@ void main() {
     texSample = u_colorDominant * exp(-d1 * d1 * 4.0) + u_colorAccent * exp(-d2 * d2 * 5.0);
   }
 
-  // Saturated color grade (1.4x saturation)
-  vec3 graded = adjustSaturation(texSample, 1.40);
+  // Saturated color grade (1.35x saturation)
+  vec3 graded = adjustSaturation(texSample, 1.35);
 
   // Blend with rich shadow base: guarantees readability of text
-  vec3 finalColor = mix(u_colorShadow, graded, 0.48 + u_energy * 0.18);
-  finalColor += u_colorDominant * (0.12 + u_beatPulse * 0.06);
+  vec3 finalColor = mix(u_colorShadow, graded, 0.42 + u_energy * 0.16);
+  finalColor += u_colorDominant * (0.08 + u_beatPulse * 0.04);
 
-  // 3. Anamorphic Horizontal Specular Flare on active word
+  // 3. Anamorphic Horizontal Specular Flare on active word (Tapered optical wings)
   if (u_streakIntensity > 0.01) {
     float dy = abs(uv.y - u_streakCenter.y);
     float dx = abs(uv.x - u_streakCenter.x);
-    float streakY = exp(-dy * dy * 1800.0);       // Ultra-narrow vertical line
-    float streakX = exp(-dx * dx * 4.0);          // Wide horizontal wings
+    float streakY = exp(-dy * dy * 3600.0);       // Ultra-narrow vertical line
+    float streakX = exp(-dx * dx * 16.0);         // Tapered horizontal wings
     vec3 flareColor = mix(u_colorHighlight, u_colorAccent, 0.35);
-    finalColor += flareColor * streakY * streakX * u_streakIntensity * 0.75;
+    finalColor += flareColor * streakY * streakX * u_streakIntensity * 0.65;
   }
 
   // 4. Cinematic Vignette (depth focus)
@@ -450,20 +467,22 @@ export class WebGLPostProcess {
     const w = window.innerWidth || 1920;
     const h = window.innerHeight || 1080;
 
+    // Cinema dust motes & subtle ambient air (non-distracting, microscopic float)
     for (let i = 0; i < this.MAX_PARTICLES; i++) {
-      // 3 Depth planes: 0.2 (distant dust), 0.6 (mid-ground bokeh), 1.0 (foreground orb)
-      const depthTier = i % 3 === 0 ? 1.0 : i % 3 === 1 ? 0.6 : 0.2;
-      const baseSize = depthTier === 1.0 ? 16 + Math.random() * 24 : depthTier === 0.6 ? 8 + Math.random() * 12 : 3 + Math.random() * 4;
+      const isBokeh = i % 14 === 0;
+      const baseSize = isBokeh ? (16 + Math.random() * 8) : (1.0 + Math.random() * 1.6);
+      const depthTier = isBokeh ? 0.3 : (0.4 + Math.random() * 0.6);
+      const baseAlpha = isBokeh ? (0.015 + Math.random() * 0.02) : (0.04 + Math.random() * 0.08);
 
       this.particles.push({
         x: Math.random() * w,
         y: Math.random() * h,
         z: depthTier,
-        vx: (Math.random() - 0.5) * (depthTier * 22 + 8),
-        vy: -Math.random() * (depthTier * 18 + 6), // Upward ambient float
+        vx: (Math.random() - 0.5) * (depthTier * 10 + 3),
+        vy: -Math.random() * (depthTier * 12 + 3), // Subtle upward ambient float
         size: baseSize,
-        alpha: Math.random() * 0.4 + 0.1,
-        baseAlpha: Math.random() * 0.35 + 0.15
+        alpha: baseAlpha,
+        baseAlpha: baseAlpha
       });
     }
   }
@@ -483,6 +502,8 @@ export class WebGLPostProcess {
 
   /**
    * Loads album artwork into a WebGL texture with smooth crossfade
+   * Downsamples and pre-filters onto a 48x48 offscreen canvas to guarantee
+   * pure, seamless liquid diffusion with zero visible image borders or tiling artifacts.
    */
   public async loadAlbumTexture(rawUrl: string): Promise<void> {
     const url = AmbientLight.resolveImageUrl(rawUrl);
@@ -504,12 +525,22 @@ export class WebGLPostProcess {
         this.prevArtTexture = this.currentArtTexture;
         this.artCrossfade = 0.0;
 
+        // Downsample and liquefy image on 48x48 offscreen canvas
+        const offCanvas = document.createElement('canvas');
+        offCanvas.width = 48;
+        offCanvas.height = 48;
+        const ctx = offCanvas.getContext('2d')!;
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.filter = 'blur(3px)';
+        ctx.drawImage(img, 0, 0, 48, 48);
+
         const tex = gl.createTexture()!;
         gl.bindTexture(gl.TEXTURE_2D, tex);
         gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, offCanvas);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.MIRRORED_REPEAT);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.MIRRORED_REPEAT);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
 
@@ -676,7 +707,13 @@ export class WebGLPostProcess {
     gl.uniform2f(this.u_partRes, w, h);
     gl.uniform1f(this.u_partEnergy, energy);
     gl.uniform1f(this.u_partBeatPulse, beatPulse);
-    gl.uniform3f(this.u_particleColor, colorAccent[0], colorAccent[1], colorAccent[2]);
+
+    // Warm silver/highlight cinema dust tint (non-distracting ambient air)
+    const hig = this.currentPalette?.rgbHighlight || [0.98, 0.98, 0.96];
+    const dustR = 0.92 * 0.70 + hig[0] * 0.30;
+    const dustG = 0.90 * 0.70 + hig[1] * 0.30;
+    const dustB = 0.86 * 0.70 + hig[2] * 0.30;
+    gl.uniform3f(this.u_particleColor, dustR, dustG, dustB);
 
     gl.bindVertexArray(this.particleVao);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.particleBuffer);

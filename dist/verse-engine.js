@@ -198,12 +198,36 @@ var VerseEngineBundle = (() => {
         this.wordSegmenter = new Intl.Segmenter(void 0, { granularity: "word" });
         this.graphemeSegmenter = new Intl.Segmenter(void 0, { granularity: "grapheme" });
       }
+      this.loadPersistentCache();
     }
     static getInstance() {
       if (!_LyricProvider.instance) {
         _LyricProvider.instance = new _LyricProvider();
       }
       return _LyricProvider.instance;
+    }
+    loadPersistentCache() {
+      try {
+        const serialized = localStorage.getItem("verse_engine_lyrics_cache_v2");
+        if (serialized) {
+          const parsed = JSON.parse(serialized);
+          if (Array.isArray(parsed)) {
+            for (const item of parsed) {
+              if (item && item.uri && Array.isArray(item.lines)) {
+                this.cache.set(item.uri, item);
+              }
+            }
+          }
+        }
+      } catch {
+      }
+    }
+    savePersistentCache() {
+      try {
+        const items = Array.from(this.cache.values()).slice(-40);
+        localStorage.setItem("verse_engine_lyrics_cache_v2", JSON.stringify(items));
+      } catch {
+      }
     }
     /**
      * Helper to convert spotify:image:<id> to https://i.scdn.co/image/<id>
@@ -214,6 +238,16 @@ var VerseEngineBundle = (() => {
         return `https://i.scdn.co/image/${url.replace("spotify:image:", "")}`;
       }
       return url;
+    }
+    isAdOrPodcast(track) {
+      const uri = track.uri || "";
+      if (uri.includes(":episode:") || uri.includes(":show:") || uri.includes(":ad:")) {
+        return true;
+      }
+      if (track.metadata?.is_advertisement === "true" || track.is_ad === true) {
+        return true;
+      }
+      return false;
     }
     async getTrackLyrics(track) {
       const uri = track.uri;
@@ -228,6 +262,22 @@ var VerseEngineBundle = (() => {
       const albumArtUrl = _LyricProvider.resolveImageUrl(rawArt);
       const durationMs = track.duration?.milliseconds || 18e4;
       const trackId = this.getTrackId(uri);
+      if (this.isAdOrPodcast(track)) {
+        const isPodcast = uri.includes(":episode:");
+        const processed2 = {
+          uri,
+          title: isPodcast ? title : "Advertisement",
+          artist: isPodcast ? artist : "Spotify Sponsor",
+          album,
+          albumArtUrl,
+          durationMs,
+          lines: [],
+          hasLyrics: false,
+          isAd: !isPodcast,
+          isPodcast
+        };
+        return processed2;
+      }
       let rawLines = null;
       let wordSyncedLines = null;
       try {
@@ -256,14 +306,14 @@ var VerseEngineBundle = (() => {
         throw new Error("Superseded by newer track request");
       }
       let lines = [];
-      let isFallback = false;
+      let hasLyrics = true;
       if (wordSyncedLines && wordSyncedLines.length > 0) {
         lines = wordSyncedLines;
       } else if (rawLines && rawLines.length > 0) {
         lines = this.synthesizeLines(rawLines);
       } else {
-        isFallback = true;
-        lines = this.generateFallbackLines(title, artist, durationMs);
+        hasLyrics = false;
+        lines = [];
       }
       const processed = {
         uri,
@@ -272,10 +322,12 @@ var VerseEngineBundle = (() => {
         album,
         albumArtUrl,
         durationMs,
-        lines
+        lines,
+        hasLyrics
       };
-      if (!isFallback && lines.length > 0) {
+      if (hasLyrics && lines.length > 0) {
         this.cache.set(uri, processed);
+        this.savePersistentCache();
       }
       return processed;
     }
@@ -300,27 +352,45 @@ var VerseEngineBundle = (() => {
       return null;
     }
     async fetchLrclib(title, artist, album, durationMs) {
+      const cleanTitle = title.replace(/\s*-\s*.*$/, "").replace(/\(feat\..*?\)/i, "").trim();
       const durationSec = Math.round(durationMs / 1e3);
-      const getUrl = `https://lrclib.net/api/get?track_name=${encodeURIComponent(title)}&artist_name=${encodeURIComponent(artist)}&album_name=${encodeURIComponent(album)}&duration=${durationSec}`;
+      const getUrl = `https://lrclib.net/api/get?track_name=${encodeURIComponent(cleanTitle)}&artist_name=${encodeURIComponent(artist)}&duration=${durationSec}`;
       try {
-        const headers = { "Lrclib-Client": "VerseEngine/2.0.0 (Spicetify Extension)" };
-        let res = await fetch(getUrl, { headers });
-        let data = null;
+        const res = await fetch(getUrl, {
+          headers: { "Lrclib-Client": "VerseEngine-Spicetify v2.0.0 (https://github.com/notUbaid/VerseEngine)" }
+        });
         if (res.ok) {
-          data = await res.json();
-        } else {
-          const searchUrl = `https://lrclib.net/api/search?track_name=${encodeURIComponent(title)}&artist_name=${encodeURIComponent(artist)}`;
-          const searchRes = await fetch(searchUrl, { headers });
-          if (searchRes.ok) {
-            const results = await searchRes.json();
-            if (Array.isArray(results) && results.length > 0) {
-              data = results.find(
-                (r) => r.syncedLyrics && Math.abs((r.duration || durationSec) - durationSec) <= 4
-              ) || results[0];
+          const data = await res.json();
+          if (data.syncedLyrics) {
+            const parsed = this.parseLrclibResponse(data);
+            if (parsed) return parsed;
+          }
+        }
+      } catch {
+      }
+      const searchUrl = `https://lrclib.net/api/search?track_name=${encodeURIComponent(cleanTitle)}&artist_name=${encodeURIComponent(artist)}`;
+      try {
+        const res = await fetch(searchUrl, {
+          headers: { "Lrclib-Client": "VerseEngine-Spicetify v2.0.0 (https://github.com/notUbaid/VerseEngine)" }
+        });
+        if (res.ok) {
+          const results = await res.json();
+          if (Array.isArray(results) && results.length > 0) {
+            const match = results.find(
+              (r) => r.syncedLyrics && Math.abs(r.duration - durationSec) <= 4
+            );
+            if (match) {
+              return this.parseLrclibResponse(match);
             }
           }
         }
-        if (!data || !data.syncedLyrics) return null;
+      } catch {
+      }
+      return null;
+    }
+    parseLrclibResponse(data) {
+      try {
+        if (!data.syncedLyrics) return null;
         const text = data.syncedLyrics;
         if (text.includes("<") && text.includes(">")) {
           const wordLines = this.parseEnhancedLrc(text);
@@ -433,8 +503,7 @@ var VerseEngineBundle = (() => {
       return lines;
     }
     /**
-     * The Phonetic Word & Letter Timing Synthesizer
-     * Segments international text (Devanagari, CJK, Latin) and applies vowel weighting
+     * Phonetic Word & Letter Timing Synthesizer
      */
     synthesizeLines(rawLines) {
       const lines = [];
@@ -514,11 +583,6 @@ var VerseEngineBundle = (() => {
       }
       return lines;
     }
-    /**
-     * Tokenize words: Preserves parenthesized ad-libs (e.g. "(yeah)"),
-     * supports space-separated languages (Latin, Indic, Cyrillic, etc.),
-     * and segments un-spaced CJK scripts using Intl.Segmenter.
-     */
     tokenizeWords(text) {
       const trimmed = text.trim();
       if (!trimmed) return [];
@@ -542,9 +606,6 @@ var VerseEngineBundle = (() => {
       }
       return [trimmed];
     }
-    /**
-     * Split string into grapheme clusters preserving complex conjuncts (e.g. Hindi प्यार -> [प्या, र])
-     */
     splitGraphemes(str) {
       if (this.graphemeSegmenter) {
         return [...this.graphemeSegmenter.segment(str)].map((s) => s.segment);
@@ -569,53 +630,6 @@ var VerseEngineBundle = (() => {
         cursor += dur;
         return charObj;
       });
-    }
-    generateFallbackLines(title, artist, durationMs) {
-      const midPoint = Math.floor(durationMs * 0.45);
-      return [
-        {
-          id: "inst_1",
-          index: 0,
-          startMs: 0,
-          endMs: midPoint,
-          words: [
-            {
-              id: "iw_1",
-              text: title || "Instrumental",
-              cleanText: sanitizeWord(title) || "instrumental",
-              startMs: 0,
-              endMs: midPoint,
-              durationMs: midPoint,
-              isMelisma: false,
-              isAdLib: false,
-              semanticEffect: "NONE",
-              chars: []
-            }
-          ],
-          adLibs: []
-        },
-        {
-          id: "inst_2",
-          index: 1,
-          startMs: midPoint,
-          endMs: durationMs,
-          words: [
-            {
-              id: "iw_2",
-              text: artist || "Enjoy the music",
-              cleanText: sanitizeWord(artist) || "enjoy the music",
-              startMs: midPoint,
-              endMs: durationMs,
-              durationMs: durationMs - midPoint,
-              isMelisma: false,
-              isAdLib: false,
-              semanticEffect: "NONE",
-              chars: []
-            }
-          ],
-          adLibs: []
-        }
-      ];
     }
   };
 
@@ -1429,11 +1443,15 @@ var VerseEngineBundle = (() => {
       this.tickCamera(currentActiveWord, this.cachedLines[targetLineIdx] ?? null, currentMs, dt);
       this.tickRim(anyVocalActive, dt);
       if (currentActiveWord && this.webgl && this.currentStyle === "convex") {
-        const wEl = currentActiveWord.el;
-        const rect = wEl.getBoundingClientRect();
-        const screenX = (rect.left + rect.width * 0.5) / (window.innerWidth || 1920);
-        const screenY = (rect.top + rect.height * 0.5) / (window.innerHeight || 1080);
-        this.webgl.setSpecularStreak(0.75, screenX, screenY);
+        const shouldTrigger = currentMs - this.lastAccentMs > 8e3 && (currentActiveWord.word.isMelisma || energy >= 0.75 && beatPulse >= 0.8 || energy > 0.65 && isDownbeat);
+        if (shouldTrigger) {
+          this.lastAccentMs = currentMs;
+          const wEl = currentActiveWord.el;
+          const rect = wEl.getBoundingClientRect();
+          const screenX = (rect.left + rect.width * 0.5) / (window.innerWidth || 1920);
+          const screenY = (rect.top + rect.height * 0.5) / (window.innerHeight || 1080);
+          this.webgl.setSpecularStreak(0.85, screenX, screenY);
+        }
       }
       if (this.webgl) {
         this.webgl.render(dt, energy, beatPulse, isDownbeat);
@@ -1954,47 +1972,64 @@ float hash(vec2 p) {
   return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
 }
 
+// 9-Tap Gaussian Atmosphere Sampler (Eliminates high-frequency noise & tile borders)
+vec3 sampleAtmosphere(sampler2D tex, vec2 uv) {
+  vec3 col = texture(tex, uv).rgb * 0.28;
+  col += texture(tex, uv + vec2(0.045, 0.0)).rgb * 0.12;
+  col += texture(tex, uv - vec2(0.045, 0.0)).rgb * 0.12;
+  col += texture(tex, uv + vec2(0.0, 0.045)).rgb * 0.12;
+  col += texture(tex, uv - vec2(0.0, 0.045)).rgb * 0.12;
+  col += texture(tex, uv + vec2(0.032, 0.032)).rgb * 0.06;
+  col += texture(tex, uv - vec2(0.032, 0.032)).rgb * 0.06;
+  col += texture(tex, uv + vec2(-0.032, 0.032)).rgb * 0.06;
+  col += texture(tex, uv + vec2(0.032, -0.032)).rgb * 0.06;
+  return col;
+}
+
 void main() {
   vec2 uv = v_uv;
   vec2 center = uv - vec2(0.5);
   float distToCenter = length(center);
 
   // 1. Edge-only chromatic aberration (spiking on chorus slam)
-  float caAmount = (0.0018 + u_chromaticSpike * 0.008) * pow(distToCenter * 1.5, 2.2);
+  float caAmount = (0.0016 + u_chromaticSpike * 0.007) * pow(distToCenter * 1.5, 2.2);
   vec2 caDir = distToCenter > 0.001 ? normalize(center) * caAmount : vec2(0.0);
 
-  // 2. 3-Scale dynamic rotating album art atmosphere
-  float t = u_time * 0.12;
+  // 2. 3-Scale dynamic rotating album art atmosphere (Deep-zoom ensures zero visible borders)
+  float t = u_time * 0.10;
+  float aspect = u_resolution.x / max(1.0, u_resolution.y);
+  vec2 cAspect = vec2(center.x * (aspect > 1.0 ? 1.0 : aspect), center.y * (aspect > 1.0 ? 1.0 / aspect : 1.0));
 
-  // Scale 1: 1.1x slow sway
-  vec2 uv1 = uv + vec2(sin(t * 0.6) * 0.06, cos(t * 0.4) * 0.05);
-  uv1 = (uv1 - 0.5) * 0.85 + 0.5;
+  // Scale 1: 0.48 deep zoom with organic sway
+  vec2 uv1 = cAspect * 0.48 + vec2(0.5) + vec2(sin(t * 0.35) * 0.035, cos(t * 0.28) * 0.035);
 
-  // Scale 2: 1.8x slow rotation
-  float ang2 = t * 0.25;
+  // Scale 2: 0.40 zoom with slow cinematic rotation
+  float ang2 = t * 0.14;
   mat2 rot2 = mat2(cos(ang2), -sin(ang2), sin(ang2), cos(ang2));
-  vec2 uv2 = rot2 * (uv - 0.5) * 1.6 + 0.5;
+  vec2 uv2 = (rot2 * cAspect) * 0.40 + vec2(0.5);
 
-  // Scale 3: 2.6x translation
-  vec2 uv3 = (uv - 0.5) * 2.4 + 0.5 + vec2(cos(t * 0.35) * 0.08, sin(t * 0.5) * 0.08);
+  // Scale 3: 0.34 zoom with counter-rotation and breathing
+  float ang3 = -t * 0.09;
+  mat2 rot3 = mat2(cos(ang3), -sin(ang3), sin(ang3), cos(ang3));
+  vec2 uv3 = (rot3 * cAspect) * 0.34 + vec2(0.5) + vec2(cos(t * 0.22) * 0.025, sin(t * 0.30) * 0.025);
 
   vec3 texSample = vec3(0.0);
 
   if (u_hasArt > 0.5) {
-    // Current artwork with chromatic separation
+    // Current artwork with multi-tap atmospheric diffusion
     vec3 c1 = vec3(
-      texture(u_artTexture, uv1 + caDir).r,
-      texture(u_artTexture, uv1).g,
-      texture(u_artTexture, uv1 - caDir).b
+      sampleAtmosphere(u_artTexture, uv1 + caDir).r,
+      sampleAtmosphere(u_artTexture, uv1).g,
+      sampleAtmosphere(u_artTexture, uv1 - caDir).b
     );
-    vec3 c2 = texture(u_artTexture, uv2).rgb;
-    vec3 c3 = texture(u_artTexture, uv3).rgb;
+    vec3 c2 = sampleAtmosphere(u_artTexture, uv2);
+    vec3 c3 = sampleAtmosphere(u_artTexture, uv3);
     vec3 artBlended = c1 * 0.45 + c2 * 0.35 + c3 * 0.20;
 
     // Previous artwork for smooth crossfade
     if (u_artCrossfade < 1.0) {
-      vec3 p1 = texture(u_prevArtTexture, uv1).rgb;
-      vec3 p2 = texture(u_prevArtTexture, uv2).rgb;
+      vec3 p1 = sampleAtmosphere(u_prevArtTexture, uv1);
+      vec3 p2 = sampleAtmosphere(u_prevArtTexture, uv2);
       vec3 prevBlended = p1 * 0.55 + p2 * 0.45;
       artBlended = mix(prevBlended, artBlended, u_artCrossfade);
     }
@@ -2009,21 +2044,21 @@ void main() {
     texSample = u_colorDominant * exp(-d1 * d1 * 4.0) + u_colorAccent * exp(-d2 * d2 * 5.0);
   }
 
-  // Saturated color grade (1.4x saturation)
-  vec3 graded = adjustSaturation(texSample, 1.40);
+  // Saturated color grade (1.35x saturation)
+  vec3 graded = adjustSaturation(texSample, 1.35);
 
   // Blend with rich shadow base: guarantees readability of text
-  vec3 finalColor = mix(u_colorShadow, graded, 0.48 + u_energy * 0.18);
-  finalColor += u_colorDominant * (0.12 + u_beatPulse * 0.06);
+  vec3 finalColor = mix(u_colorShadow, graded, 0.42 + u_energy * 0.16);
+  finalColor += u_colorDominant * (0.08 + u_beatPulse * 0.04);
 
-  // 3. Anamorphic Horizontal Specular Flare on active word
+  // 3. Anamorphic Horizontal Specular Flare on active word (Tapered optical wings)
   if (u_streakIntensity > 0.01) {
     float dy = abs(uv.y - u_streakCenter.y);
     float dx = abs(uv.x - u_streakCenter.x);
-    float streakY = exp(-dy * dy * 1800.0);       // Ultra-narrow vertical line
-    float streakX = exp(-dx * dx * 4.0);          // Wide horizontal wings
+    float streakY = exp(-dy * dy * 3600.0);       // Ultra-narrow vertical line
+    float streakX = exp(-dx * dx * 16.0);         // Tapered horizontal wings
     vec3 flareColor = mix(u_colorHighlight, u_colorAccent, 0.35);
-    finalColor += flareColor * streakY * streakX * u_streakIntensity * 0.75;
+    finalColor += flareColor * streakY * streakX * u_streakIntensity * 0.65;
   }
 
   // 4. Cinematic Vignette (depth focus)
@@ -2290,18 +2325,20 @@ void main() {
       const w = window.innerWidth || 1920;
       const h = window.innerHeight || 1080;
       for (let i = 0; i < this.MAX_PARTICLES; i++) {
-        const depthTier = i % 3 === 0 ? 1 : i % 3 === 1 ? 0.6 : 0.2;
-        const baseSize = depthTier === 1 ? 16 + Math.random() * 24 : depthTier === 0.6 ? 8 + Math.random() * 12 : 3 + Math.random() * 4;
+        const isBokeh = i % 14 === 0;
+        const baseSize = isBokeh ? 16 + Math.random() * 8 : 1 + Math.random() * 1.6;
+        const depthTier = isBokeh ? 0.3 : 0.4 + Math.random() * 0.6;
+        const baseAlpha = isBokeh ? 0.015 + Math.random() * 0.02 : 0.04 + Math.random() * 0.08;
         this.particles.push({
           x: Math.random() * w,
           y: Math.random() * h,
           z: depthTier,
-          vx: (Math.random() - 0.5) * (depthTier * 22 + 8),
-          vy: -Math.random() * (depthTier * 18 + 6),
-          // Upward ambient float
+          vx: (Math.random() - 0.5) * (depthTier * 10 + 3),
+          vy: -Math.random() * (depthTier * 12 + 3),
+          // Subtle upward ambient float
           size: baseSize,
-          alpha: Math.random() * 0.4 + 0.1,
-          baseAlpha: Math.random() * 0.35 + 0.15
+          alpha: baseAlpha,
+          baseAlpha
         });
       }
     }
@@ -2319,6 +2356,8 @@ void main() {
     }
     /**
      * Loads album artwork into a WebGL texture with smooth crossfade
+     * Downsamples and pre-filters onto a 48x48 offscreen canvas to guarantee
+     * pure, seamless liquid diffusion with zero visible image borders or tiling artifacts.
      */
     async loadAlbumTexture(rawUrl) {
       const url = AmbientLight.resolveImageUrl(rawUrl);
@@ -2335,12 +2374,20 @@ void main() {
           }
           this.prevArtTexture = this.currentArtTexture;
           this.artCrossfade = 0;
+          const offCanvas = document.createElement("canvas");
+          offCanvas.width = 48;
+          offCanvas.height = 48;
+          const ctx = offCanvas.getContext("2d");
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = "high";
+          ctx.filter = "blur(3px)";
+          ctx.drawImage(img, 0, 0, 48, 48);
           const tex = gl.createTexture();
           gl.bindTexture(gl.TEXTURE_2D, tex);
           gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
-          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
-          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
-          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, offCanvas);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.MIRRORED_REPEAT);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.MIRRORED_REPEAT);
           gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
           gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
           this.currentArtTexture = tex;
@@ -2460,7 +2507,11 @@ void main() {
       gl.uniform2f(this.u_partRes, w, h);
       gl.uniform1f(this.u_partEnergy, energy);
       gl.uniform1f(this.u_partBeatPulse, beatPulse);
-      gl.uniform3f(this.u_particleColor, colorAccent[0], colorAccent[1], colorAccent[2]);
+      const hig = this.currentPalette?.rgbHighlight || [0.98, 0.98, 0.96];
+      const dustR = 0.92 * 0.7 + hig[0] * 0.3;
+      const dustG = 0.9 * 0.7 + hig[1] * 0.3;
+      const dustB = 0.86 * 0.7 + hig[2] * 0.3;
+      gl.uniform3f(this.u_particleColor, dustR, dustG, dustB);
       gl.bindVertexArray(this.particleVao);
       gl.bindBuffer(gl.ARRAY_BUFFER, this.particleBuffer);
       gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
@@ -2548,7 +2599,7 @@ void main() {
           height: 100vh;
           overflow: hidden;
           background-color: var(--ve-bg, #0A0808);
-          font-family: 'Bricolage Grotesque', 'Plus Jakarta Sans', 'Inter Tight', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+          font-family: 'Bricolage Grotesque', 'Plus Jakarta Sans', 'Inter Tight', 'Nirmala UI', 'Meiryo', 'Hiragino Sans', 'Yu Gothic', 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
           font-feature-settings: "kern" 1, "liga" 1;
           -webkit-font-smoothing: antialiased;
           -moz-osx-font-smoothing: grayscale;
